@@ -1,5 +1,5 @@
 // Service Worker: hält die App offline verfügbar und merkt sich Kartenkacheln.
-const VERSION = 'wb-1.1.0';
+const VERSION = 'wb-1.1.1';
 const SHELL = `shell-${VERSION}`;
 const TILES = 'tiles-v1';
 const FONTS = 'fonts-v1';
@@ -14,7 +14,7 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (ev) => {
-  ev.waitUntil(caches.open(SHELL).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  ev.waitUntil(caches.open(SHELL).then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (ev) => {
@@ -71,7 +71,7 @@ self.addEventListener('fetch', (ev) => {
     ev.respondWith((async () => {
       const c = await caches.open(SHELL);
       const hit = (await c.match(req, { ignoreSearch: true })) || (req.mode === 'navigate' ? await c.match('./index.html') : null);
-      const net = fetch(req).then((res) => { if (res.ok) c.put(req, res.clone()); return res; }).catch(() => null);
+      const net = fetch(req.url, { cache: 'no-cache' }).then((res) => { if (res.ok) c.put(req, res.clone()); return res; }).catch(() => null);
       if (hit) { ev.waitUntil(net); return hit; }
       return (await net) || new Response('', { status: 504 });
     })());

@@ -1,7 +1,7 @@
 /* Wiesenbuch – Notizen für die Wiese
    Version 1: läuft komplett offline am Handy (IndexedDB). */
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const ANDERES = '_anderes';
 const CATS = ['Säule', 'Draht', 'Hagelnetz', 'Bewässerung', 'Baum', 'Sonstiges'];
 const MAP_START = { lat: 46.628, lng: 10.776, zoom: 13 }; // Vinschgau (Schlanders)
@@ -1173,13 +1173,19 @@ async function firstRun() {
 
 /* ---------- Start ---------- */
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+  window.addEventListener('load', async () => {
     const hadController = !!navigator.serviceWorker.controller;
-    let shown = false;
+    let reg = null;
+    try { reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }); } catch (e) {}
+    // bei jedem Öffnen bzw. Zurückkehren in die App nach Updates schauen
+    const check = () => { if (reg && navigator.onLine) reg.update().catch(() => {}); };
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+    let done = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (shown || !hadController) return; shown = true;
-      toast('Neue Version installiert – wird beim nächsten Öffnen aktiv', 4000);
+      if (done || !hadController) return; done = true;
+      // Neue Version: sofort neu laden, außer mitten im Eintragen/Anpeilen
+      if (/^#(neu|bearbeiten|peilen)/.test(location.hash)) toast('Neue Version da – wird beim nächsten Öffnen aktiv', 4000);
+      else location.reload();
     });
   });
 }
