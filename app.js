@@ -1,7 +1,7 @@
 /* Wiesenbuch – Notizen für die Wiese
    Version 1: läuft komplett offline am Handy (IndexedDB). */
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const ANDERES = '_anderes';
 const CATS = ['Säule', 'Draht', 'Hagelnetz', 'Bewässerung', 'Baum', 'Sonstiges'];
 const MAP_START = { lat: 46.628, lng: 10.776, zoom: 13 }; // Vinschgau (Schlanders)
@@ -30,6 +30,7 @@ const I = {
   layers: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>',
   edit: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
   nav: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"/></svg>',
+  target: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l7 18-7-4-7 4z"/></svg>',
   share: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>',
 };
 const pinSvg = (color, size = 34) =>
@@ -214,6 +215,7 @@ async function render() {
     else if (route === 'bearbeiten') await viewForm(id);
     else if (route === 'eintrag') await viewDetail(id);
     else if (route === 'karte') await viewMap();
+    else if (route === 'peilen') await viewPeilen(id);
     else if (route === 'wiesen') await viewWiesen();
     else if (route === 'einstellungen') await viewSettings();
     else go('#liste');
@@ -226,39 +228,88 @@ window.addEventListener('hashchange', render);
 
 /* ---------- 1 · Liste ---------- */
 let listFilter = 'offen';
+function cardHtml(e, byId, withWiese = true) {
+  const sub = withWiese ? wieseLabel(e, byId) : (e.wieseId === ANDERES ? (e.ort || 'Hof / Anderes') : (e.reihe ? `Reihe ${e.reihe}` : ''));
+  return `
+    <a class="card ${e.status === 'erledigt' ? 'done' : ''}" href="#eintrag/${e.id}">
+      ${e.photoIds && e.photoIds.length ? `<img class="thumb" data-photo="${e.photoIds[0]}" alt="">` : `<div class="thumb">${I.camBig}</div>`}
+      <div class="body">
+        <div class="row"><h2>${esc(entryTitle(e))}</h2>
+          ${e.status === 'erledigt' ? '<span class="badge ok">Erledigt</span>' : e.prio === 'dringend' ? '<span class="badge">Dringend</span>' : ''}</div>
+        ${sub ? `<span class="l1">${esc(sub)}</span>` : ''}
+        ${e.braucht ? `<span class="l2">Braucht: ${esc(e.braucht)}</span>` : ''}
+        <span class="l3">${esc(fmtDate(e.createdAt))}${e.author ? ' · ' + esc(e.author) : ''}</span>
+      </div>
+    </a>`;
+}
+
 async function viewList() {
-  const [entries, wiesen] = await Promise.all([getEntries(), getWiesen()]);
+  const [entries, wiesen, listView, collapsed] = await Promise.all([
+    getEntries(), getWiesen(), DB.getMeta('listView', 'datum'), DB.getMeta('collapsed', {}),
+  ]);
   const byId = Object.fromEntries(wiesen.map((w) => [w.id, w]));
   const offen = entries.filter((e) => e.status !== 'erledigt');
   const shown = listFilter === 'alle' ? entries : entries.filter((e) => (listFilter === 'offen' ? e.status !== 'erledigt' : e.status === 'erledigt'));
   // Offene: dringend zuerst
-  if (listFilter === 'offen') shown.sort((a, b) => (b.prio === 'dringend') - (a.prio === 'dringend') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  if (listFilter !== 'erledigt') shown.sort((a, b) => (a.status === 'erledigt') - (b.status === 'erledigt') || (b.prio === 'dringend') - (a.prio === 'dringend') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  let body;
+  if (!shown.length) {
+    body = `<p class="empty">${listFilter === 'erledigt' ? 'Noch nichts erledigt.' : 'Keine offenen Punkte.<br>Mit „Neuer Eintrag“ geht’s los.'}</p>`;
+  } else if (listView === 'wiese') {
+    // Gruppen: Wiesen in Namensreihenfolge, dann gelöschte/unbekannte, dann Hof / Anderes, dann ohne Wiese
+    const groups = new Map();
+    const keyOf = (e) => (e.wieseId === ANDERES ? ANDERES : e.wieseId && byId[e.wieseId] ? e.wieseId : e.wieseName ? 'n:' + e.wieseName : '_ohne');
+    for (const e of shown) { const k = keyOf(e); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+    const order = [...wiesen.map((w) => w.id).filter((id) => groups.has(id)),
+      ...[...groups.keys()].filter((k) => k.startsWith('n:')).sort(),
+      ...(groups.has(ANDERES) ? [ANDERES] : []), ...(groups.has('_ohne') ? ['_ohne'] : [])];
+    const nameOf = (k) => (k === ANDERES ? 'Hof / Anderes' : k === '_ohne' ? 'Ohne Wiese' : k.startsWith('n:') ? k.slice(2) : byId[k].name);
+    body = order.map((k) => {
+      const items = groups.get(k);
+      const nOpen = items.filter((e) => e.status !== 'erledigt').length;
+      const nUrg = items.filter((e) => e.status !== 'erledigt' && e.prio === 'dringend').length;
+      const isOpen = !collapsed[k];
+      return `<section class="grp">
+        <button class="grphead" data-g="${esc(k)}" aria-expanded="${isOpen}">
+          <span class="gname">${esc(nameOf(k))}</span>
+          ${nUrg ? `<span class="badge">${nUrg} dringend</span>` : ''}
+          <span class="pill">${listFilter === 'erledigt' ? items.length + ' erledigt' : nOpen + ' offen'}</span>
+          <svg class="chev ${isOpen ? 'up' : ''}" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        ${isOpen ? `<div class="grpbody">${items.map((e) => cardHtml(e, byId, false)).join('')}</div>` : ''}
+      </section>`;
+    }).join('');
+  } else {
+    body = shown.map((e) => cardHtml(e, byId)).join('');
+  }
 
   const sub = offen.length === 1 ? '1 offener Punkt' : `${offen.length} offene Punkte`;
   app.innerHTML = `
     ${topbar({ title: 'Wiesenbuch', sub, right: `<a class="iconbtn filled" href="#einstellungen" aria-label="Einstellungen">${I.gear}</a>` })}
-    <div class="headwrap" role="group" aria-label="Filter">
-      <button class="chip-h ${listFilter === 'offen' ? 'on' : ''}" data-f="offen">Offen (${offen.length})</button>
-      <button class="chip-h ${listFilter === 'erledigt' ? 'on' : ''}" data-f="erledigt">Erledigt</button>
-      <button class="chip-h ${listFilter === 'alle' ? 'on' : ''}" data-f="alle">Alle</button>
+    <div class="headwrap">
+      <div class="chips" role="group" aria-label="Filter">
+        <button class="chip-h ${listFilter === 'offen' ? 'on' : ''}" data-f="offen">Offen (${offen.length})</button>
+        <button class="chip-h ${listFilter === 'erledigt' ? 'on' : ''}" data-f="erledigt">Erledigt</button>
+        <button class="chip-h ${listFilter === 'alle' ? 'on' : ''}" data-f="alle">Alle</button>
+      </div>
+      <div class="seg" role="group" aria-label="Sortierung">
+        <button class="${listView !== 'wiese' ? 'on' : ''}" data-v="datum" aria-pressed="${listView !== 'wiese'}">Nach Datum</button>
+        <button class="${listView === 'wiese' ? 'on' : ''}" data-v="wiese" aria-pressed="${listView === 'wiese'}">Nach Wiese</button>
+      </div>
     </div>
-    <main class="content" id="list">
-      ${shown.length ? shown.map((e) => `
-        <a class="card ${e.status === 'erledigt' ? 'done' : ''}" href="#eintrag/${e.id}">
-          ${e.photoIds && e.photoIds.length ? `<img class="thumb" data-photo="${e.photoIds[0]}" alt="">` : `<div class="thumb">${I.camBig}</div>`}
-          <div class="body">
-            <div class="row"><h2>${esc(entryTitle(e))}</h2>
-              ${e.status === 'erledigt' ? '<span class="badge ok">Erledigt</span>' : e.prio === 'dringend' ? '<span class="badge">Dringend</span>' : ''}</div>
-            <span class="l1">${esc(wieseLabel(e, byId))}</span>
-            ${e.braucht ? `<span class="l2">Braucht: ${esc(e.braucht)}</span>` : ''}
-            <span class="l3">${esc(fmtDate(e.createdAt))}${e.author ? ' · ' + esc(e.author) : ''}</span>
-          </div>
-        </a>`).join('') : `<p class="empty">${listFilter === 'erledigt' ? 'Noch nichts erledigt.' : 'Keine offenen Punkte.<br>Mit „Neuer Eintrag“ geht’s los.'}</p>`}
-    </main>
+    <main class="content" id="list">${body}</main>
     <div class="fabwrap"><a class="fab" href="#neu">${I.plus}Neuer Eintrag</a></div>
     ${bottomnav('liste')}`;
 
   $$('.chip-h').forEach((b) => b.addEventListener('click', () => { listFilter = b.dataset.f; render(); }));
+  $$('.seg button').forEach((b) => b.addEventListener('click', async () => { await DB.setMeta('listView', b.dataset.v); render(); }));
+  $$('.grphead').forEach((b) => b.addEventListener('click', async () => {
+    const c = await DB.getMeta('collapsed', {});
+    c[b.dataset.g] = !c[b.dataset.g];
+    await DB.setMeta('collapsed', c);
+    const y = window.scrollY; await render(); window.scrollTo(0, y);
+  }));
   $$('img[data-photo]').forEach(async (img) => { const u = await photoUrl(img.dataset.photo); if (u) img.src = u; });
 }
 
@@ -635,7 +686,7 @@ async function viewDetail(id) {
       </dl>
       <button class="btn ${done ? '' : 'solid'}" id="btnDone" style="min-height:64px;font-size:19px">${done ? 'Wieder öffnen' : I.check + 'Erledigt'}</button>
       <div class="grid2">
-        ${hasLoc ? `<a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${e.lat},${e.lng}&travelmode=walking" target="_blank" rel="noopener">${I.nav}Hinführen</a>` : `<span></span>`}
+        ${hasLoc ? `<a class="btn" href="#peilen/${e.id}">${I.target}Anpeilen</a>` : `<span></span>`}
         <button class="btn" id="btnShare">${I.share}Teilen</button>
       </div>
       ${hasLoc ? `<a class="btn" href="#karte" id="btnOnMap">${I.map}Auf Karte zeigen</a>` : ''}
@@ -674,6 +725,172 @@ async function shareEntry(e, byId) {
     else if (navigator.share) await navigator.share({ text });
     else { await navigator.clipboard.writeText(text); toast('Text kopiert'); }
   } catch (err) { if (err.name !== 'AbortError') toast('Teilen nicht möglich'); }
+}
+
+/* ---------- 6 · Anpeilen ---------- */
+function bearingDeg(a, b) {
+  const r = Math.PI / 180;
+  const y = Math.sin((b.lng - a.lng) * r) * Math.cos(b.lat * r);
+  const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lng - a.lng) * r);
+  return (Math.atan2(y, x) / r + 360) % 360;
+}
+const norm180 = (d) => ((d + 540) % 360) - 180;
+function dirText(rel) {
+  const a = Math.abs(rel), s = rel > 0 ? 'rechts' : 'links';
+  if (a < 15) return 'geradeaus';
+  if (a < 60) return 'leicht ' + s;
+  if (a < 130) return s;
+  return 'hinter dir';
+}
+function compassWord(deg) {
+  return ['Norden', 'Nordosten', 'Osten', 'Südosten', 'Süden', 'Südwesten', 'Westen', 'Nordwesten'][Math.round(deg / 45) % 8];
+}
+const fmtDist = (d) => (d < 1000 ? `${Math.round(d)} m` : `${(d / 1000).toFixed(1).replace('.', ',')} km`);
+
+async function viewPeilen(id) {
+  const e = await DB.get('entries', id);
+  if (!e || e.deleted) return go('#liste');
+  if (e.lat == null) { toast('Dieser Eintrag hat keinen Standort'); return go(`#eintrag/${id}`); }
+  const wiesen = await getWiesen();
+  const byId = Object.fromEntries(wiesen.map((w) => [w.id, w]));
+  const target = { lat: e.lat, lng: e.lng };
+  const arrowSvg = '<svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l7 18-7-4-7 4z" fill="#fff"/></svg>';
+
+  app.innerHTML = `
+    <div class="peil">
+      <div class="ptop">
+        <a class="iconbtn" href="#eintrag/${e.id}" aria-label="Zurück">${I.back}</a>
+        <h1>${esc(entryTitle(e))}<span class="sub">${esc(wieseLabel(e, byId))}</span></h1>
+      </div>
+      <div class="pmain" aria-live="polite">
+        <div class="ring" id="pRing">
+          <div class="north" id="pNorth"><span>N</span></div>
+          <div class="disc" id="pDisc">${arrowSvg}</div>
+        </div>
+        <div><div class="pdist" id="pDist">…</div><div class="pdir" id="pDir">Standort wird ermittelt</div></div>
+        <div class="pinfo" id="pInfo">Handy flach vor dich halten</div>
+        <button class="btn light hidden" id="pCompass" style="min-height:48px">Kompass einschalten</button>
+      </div>
+      <div class="pbottom">
+        ${e.braucht || (e.photoIds && e.photoIds.length) ? `<div class="pneed">${e.photoIds && e.photoIds.length ? `<img data-photo="${e.photoIds[0]}" alt="Foto">` : ''}<span>${e.braucht ? 'Braucht: ' + esc(e.braucht) : esc(e.beschreibung || '')}</span></div>` : ''}
+        <div class="grid2">
+          <a class="btn light" href="#karte" id="pMap">${I.map}Auf Karte</a>
+          <button class="btn white" id="pDone">${I.check}Erledigt</button>
+        </div>
+        <a class="linkbtn hidden" id="pGmaps" href="https://www.google.com/maps/dir/?api=1&destination=${e.lat},${e.lng}&travelmode=walking" target="_blank" rel="noopener">Weit weg? In Google Maps öffnen</a>
+      </div>
+    </div>`;
+  const img = $('.pneed img'); if (img) photoUrl(img.dataset.photo).then((u) => { if (u) img.src = u; });
+
+  let pos = null, heading = null, lastHeadingAt = 0, wasNear = false;
+  let lastRel = 0, lastNorth = 0;
+
+  function draw() {
+    const ring = $('#pRing'); if (!ring) return;
+    if (!pos) return;
+    const d = distM(pos, target);
+    const brg = bearingDeg(pos, target);
+    const near = d <= Math.max(6, Math.min(pos.acc || 0, 12));
+    const hasCompass = heading != null && Date.now() - lastHeadingAt < 3000;
+    $('#pGmaps').classList.toggle('hidden', d < 800);
+
+    if (near) {
+      if (!wasNear) { wasNear = true; if (navigator.vibrate) navigator.vibrate([120, 80, 120]); }
+      ring.classList.add('near');
+      $('#pNorth').classList.add('hidden');
+      $('#pDisc').innerHTML = `<div class="here">${I.check.replace('width="26" height="26"', 'width="56" height="56"')}</div>`;
+      $('#pDist').textContent = 'Du bist da';
+      $('#pDist').style.fontSize = '40px';
+      $('#pDir').textContent = `im Umkreis von ca. ${Math.max(5, Math.round(pos.acc || 5))} m – nach dem Foto schauen`;
+    } else {
+      if (wasNear && d > Math.max(12, (pos.acc || 0) * 1.5)) wasNear = false;
+      if (!wasNear) {
+        if (ring.classList.contains('near')) {
+          ring.classList.remove('near');
+          $('#pNorth').classList.remove('hidden');
+          $('#pDisc').innerHTML = arrowSvg;
+          $('#pDist').style.fontSize = '';
+        }
+        // kürzester Drehweg, damit der Pfeil nicht „herumwirbelt“
+        const wantRel = hasCompass ? norm180(brg - heading) : brg;
+        lastRel += norm180(wantRel - lastRel);
+        $('.arrow', ring).style.transform = `rotate(${lastRel}deg)`;
+        const wantN = hasCompass ? -heading : 0;
+        lastNorth += norm180(wantN - lastNorth);
+        $('#pNorth').style.transform = `rotate(${lastNorth}deg)`;
+        $('#pDist').textContent = fmtDist(d);
+        $('#pDir').textContent = hasCompass ? dirText(norm180(brg - heading)) : `Richtung ${compassWord(brg)}`;
+      }
+    }
+    const acc = Math.round(pos.acc || 0);
+    $('#pInfo').textContent = acc > 25 ? `GPS noch ungenau (±${acc} m) – kurz warten`
+      : hasCompass ? `GPS ±${acc} m · Handy flach halten`
+      : `GPS ±${acc} m · kein Kompass – Pfeil zeigt bei Norden oben`;
+  }
+
+  // GPS
+  let watch = null;
+  if (navigator.geolocation) {
+    watch = navigator.geolocation.watchPosition((p) => {
+      pos = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+      draw();
+    }, (err) => {
+      $('#pDist').textContent = '–';
+      $('#pDir').textContent = err.code === 1 ? 'Standort-Erlaubnis fehlt' : 'GPS nicht gefunden';
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+  } else { $('#pDir').textContent = 'Dieses Gerät hat kein GPS'; }
+
+  // Kompass (Android: deviceorientationabsolute, iPhone: webkitCompassHeading)
+  let smooth = null;
+  function onOrient(ev) {
+    let h = null;
+    if (typeof ev.webkitCompassHeading === 'number') h = ev.webkitCompassHeading;
+    else if (ev.absolute !== false && typeof ev.alpha === 'number') h = 360 - ev.alpha;
+    if (h == null) return;
+    const so = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+    h = (h + so + 360) % 360;
+    smooth = smooth == null ? h : (smooth + norm180(h - smooth) * 0.25 + 360) % 360;
+    heading = smooth; lastHeadingAt = Date.now();
+  }
+  const evName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
+  // Manche Browser verlangen eine Erlaubnis, die nur nach einem Antippen geht
+  const needsPerm = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
+  async function askCompass() {
+    try { const r = await DeviceOrientationEvent.requestPermission(); return r === 'granted'; } catch (err) { return false; }
+  }
+  window.addEventListener(evName, onOrient, true);
+  if (needsPerm) askCompass();
+  const permTimer = setTimeout(() => {
+    if (heading != null || !needsPerm || !$('#pCompass')) return;
+    $('#pCompass').classList.remove('hidden');
+  }, 2500);
+  const iv = setInterval(draw, 250);
+
+  // Bildschirm anlassen
+  let lock = null;
+  const keepAwake = async () => { try { if (navigator.wakeLock && document.visibilityState === 'visible') lock = await navigator.wakeLock.request('screen'); } catch (err) {} };
+  keepAwake();
+  document.addEventListener('visibilitychange', keepAwake);
+
+  $('#pCompass').addEventListener('click', async () => {
+    const ok = await askCompass();
+    $('#pCompass').classList.add('hidden');
+    if (!ok) toast('Kompass nicht erlaubt – Pfeil zeigt bei Norden oben');
+  });
+  $('#pMap').addEventListener('click', () => sessionStorage.setItem('wbFocusEntry', e.id));
+  $('#pDone').addEventListener('click', async () => {
+    const author = await DB.getMeta('author', '');
+    await DB.put('entries', { ...e, status: 'erledigt', erledigtAt: now(), erledigtVon: author, updatedAt: now() });
+    toast('Erledigt ✓'); go('#liste');
+  });
+
+  leaveHooks.push(() => {
+    if (watch != null) navigator.geolocation.clearWatch(watch);
+    window.removeEventListener(evName, onOrient, true);
+    clearInterval(iv); clearTimeout(permTimer);
+    document.removeEventListener('visibilitychange', keepAwake);
+    if (lock) lock.release().catch(() => {});
+  });
 }
 
 /* ---------- 3 · Karte ---------- */
@@ -745,7 +962,7 @@ async function viewMap() {
           ${e.braucht ? `<span class="l2">Braucht: ${esc(e.braucht)}</span>` : ''}</div>
       </a>
       <div class="grid2">
-        <a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${e.lat},${e.lng}&travelmode=walking" target="_blank" rel="noopener">${I.nav}Hinführen</a>
+        <a class="btn" href="#peilen/${e.id}">${I.target}Anpeilen</a>
         <a class="btn solid" href="#eintrag/${e.id}">Details</a>
       </div>`;
     s.classList.remove('hidden');

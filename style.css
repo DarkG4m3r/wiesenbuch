@@ -43,7 +43,46 @@ a { color: var(--green); }
 .content.form { padding-bottom: 40px; gap: 18px; }
 
 /* Filter chips in header */
-.headwrap { background: var(--green); padding: 0 16px 16px; display: flex; gap: 8px; position: sticky; top: 76px; z-index: 499; }
+.headwrap { background: var(--green); padding: 0 16px 14px; display: flex; flex-direction: column; gap: 12px; position: sticky; top: 76px; z-index: 499; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); background: var(--green-2); border-radius: 14px; padding: 4px; }
+.seg button { height: 42px; border-radius: 10px; border: 0; background: transparent; color: #CFE0D3; font-size: 15px; }
+.seg button.on { background: #fff; color: var(--green); font-weight: 700; }
+
+/* Gruppen */
+.grp { background: var(--card); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); overflow: hidden; }
+.grphead { width: 100%; min-height: 58px; border: 0; background: var(--card); display: flex; align-items: center; gap: 10px; padding: 0 14px; text-align: left; color: var(--ink); }
+.grphead .gname { flex: 1; font-size: 18px; font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+.grphead .chev { flex-shrink: 0; color: var(--muted); transition: transform .15s; }
+.grphead .chev.up { transform: rotate(180deg); }
+.grpbody { border-top: 1px solid #E4E7E0; display: flex; flex-direction: column; }
+.grpbody .card { box-shadow: none; border-radius: 0; border-bottom: 1px solid #EEF0EB; }
+.grpbody .card .thumb { width: 64px; height: 64px; }
+
+/* Anpeilen */
+.peil { position: fixed; inset: 0; background: var(--green); color: #fff; display: flex; flex-direction: column; z-index: 1000; }
+.peil .ptop { padding: calc(14px + env(safe-area-inset-top)) 12px 8px; display: flex; align-items: center; gap: 8px; }
+.peil .ptop h1 { margin: 0; font-size: 22px; }
+.peil .ptop .sub { display: block; font-size: 15px; color: #CFE0D3; font-weight: 400; }
+.peil .pmain { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 0 20px; text-align: center; }
+.ring { width: min(290px, 74vw); aspect-ratio: 1; border-radius: 50%; border: 3px solid #4F7A5D; position: relative; display: flex; align-items: center; justify-content: center; }
+.ring .north { position: absolute; inset: 0; transition: transform .25s linear; }
+.ring .north span { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); font-size: 14px; font-weight: 700; color: #9FC0A8; }
+.ring .disc { width: 70%; aspect-ratio: 1; border-radius: 50%; background: var(--green-2); display: flex; align-items: center; justify-content: center; }
+.ring .arrow { width: 65%; height: 65%; transition: transform .25s linear; }
+.ring.near { border-color: transparent; background: rgba(169,195,148,.14); }
+.ring.near .disc { background: rgba(169,195,148,.22); }
+.ring .here { width: 62%; aspect-ratio: 1; border-radius: 50%; background: var(--red); border: 4px solid #fff; display: flex; align-items: center; justify-content: center; animation: pulse2 1.6s infinite; }
+@keyframes pulse2 { 50% { box-shadow: 0 0 0 14px rgba(255,255,255,.12); } }
+.pdist { font-size: 64px; font-weight: 700; line-height: 1; }
+.pdir { font-size: 22px; color: #E3ECDD; }
+.pinfo { font-size: 15px; color: #9FC0A8; line-height: 1.4; }
+.peil .pbottom { padding: 12px 16px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; }
+.peil .pneed { display: flex; gap: 12px; align-items: center; background: var(--green-2); border-radius: 16px; padding: 10px; font-size: 15px; color: #E3ECDD; }
+.peil .pneed img { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; flex-shrink: 0; }
+.btn.light { background: transparent; color: #fff; border-color: #fff; }
+.btn.white { background: #fff; color: var(--green); border-color: #fff; }
+.peil .linkbtn { color: #CFE0D3; align-self: center; }
 .chip-h {
   height: 44px; padding: 0 16px; border-radius: 22px;
   border: 1.5px solid #6E9479; background: transparent; color: #fff; font-size: 16px;

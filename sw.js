@@ -1,5 +1,5 @@
 // Service Worker: hält die App offline verfügbar und merkt sich Kartenkacheln.
-const VERSION = 'wb-1.0.0';
+const VERSION = 'wb-1.1.0';
 const SHELL = `shell-${VERSION}`;
 const TILES = 'tiles-v1';
 const FONTS = 'fonts-v1';
