@@ -1,4 +1,4 @@
-# Wiesenbuch – Version 0.2.1
+# Wiesenbuch – Version 0.2.2
 
 Notiz-App für die Apfelwiese: Mängel mit Foto, Standort und Wiese festhalten.
 Läuft als PWA. Alle Daten bleiben offline am Handy, Sicherung als ZIP.

@@ -817,6 +817,8 @@ async function viewMap() {
 
   const map = await makeMap($('#map'));
   currentMap = map;
+  let meMarker = null;
+  const distTxt = (p) => (meMarker ? ` · ${fmtDist(distM(meMarker.getLatLng(), p))} entfernt` : '');
   const all = [];
   for (const a of anlShown) {
     if (a.typ === 'Leitung') {
@@ -851,7 +853,6 @@ async function viewMap() {
   else if (wiesen.some((w) => w.lat != null)) map.fitBounds(L.latLngBounds(wiesen.filter((w) => w.lat != null).map((w) => [w.lat, w.lng])).pad(0.3), { maxZoom: 17 });
   map.on('moveend', () => { const c = map.getCenter(); sessionStorage.setItem('wbMapView', JSON.stringify({ lat: c.lat, lng: c.lng, z: map.getZoom() })); });
 
-  let meMarker = null;
   if (navigator.geolocation) {
     const w = navigator.geolocation.watchPosition((p) => {
       const ll = [p.coords.latitude, p.coords.longitude];
@@ -865,8 +866,6 @@ async function viewMap() {
     try { const p = await locateOnce(); map.setView([p.lat, p.lng], 18); } catch (e) { toast('Standort nicht gefunden'); }
   };
   map.on('click', () => { $('#sheet').classList.add('hidden'); $('#mapMenu').classList.add('hidden'); });
-  const distTxt = (p) => (meMarker ? ` · ${fmtDist(distM(meMarker.getLatLng(), p))} entfernt` : '');
-
   async function showSheet(e) {
     const s = $('#sheet');
     s.innerHTML = `
