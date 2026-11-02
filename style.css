@@ -425,3 +425,35 @@ textarea.inp { resize: vertical; padding-right: 64px; }
 /* Aus: Schalter in „Mehr“ oder „Animationen entfernen“ am Handy */
 html.no-anim *, html.no-anim *::before, html.no-anim *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* 0.2.3: Position nachbessern */
+.pfix { background: rgba(255,255,255,.12); border-radius: 16px; padding: 12px; display: flex; flex-direction: column; gap: 8px; text-align: center; }
+.pfix .small { color: #D9E6DC; }
+.pfix .btn { min-height: 54px; }
+.pfix .linkbtn { color: #D9E6DC; align-self: center; }
+.pbar { height: 10px; border-radius: 5px; background: rgba(0,0,0,.25); overflow: hidden; }
+.pbar > div { height: 100%; background: #fff; transition: width 1s linear; }
+.pfixok { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 17px; }
+
+/* 0.2.3 Korrekturen */
+/* lange Titel: höchstens 2 Zeilen */
+.topbar h1, .peil .ptop h1 { min-width: 0; }
+.ttl { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.topbar .sub, .peil .ptop .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Anpeilen auf kleinen Handys: scrollbar, Ring kleiner */
+.peil { overflow-y: auto; }
+.peil .pmain { flex: 1 0 auto; padding-top: 8px; padding-bottom: 8px; gap: 14px; }
+.ring { width: min(290px, 74vw, 38vh); }
+@media (max-height: 700px) { .pdist { font-size: 48px; } .pdir { font-size: 18px; } }
+/* Leitung zeichnen: kompakter auf kleinen Bildschirmen */
+@media (max-height: 720px) { #ldSheet { gap: 8px; padding: 10px; } #ldSheet > .small { display: none; } #ldSheet .btn { min-height: 48px; } }
+/* größere Tippflächen */
+.photos .ph .phrm { width: 40px; height: 40px; border-radius: 20px; }
+.sw { width: 40px; height: 40px; border-radius: 20px; }
+.sechead a { display: inline-flex; align-items: center; min-height: 44px; }
+.galbtn { border: 0; padding: 0; background: none; flex-shrink: 0; scroll-snap-align: start; max-width: 92%; }
+.galbtn img { height: 260px; max-width: 100%; border-radius: 14px; object-fit: cover; display: block; background: var(--photo); }
+.photos .ph button[data-rm] { width: 40px; height: 40px; border-radius: 20px; }
+/* sehr lange Namen in Listen kürzen */
+.card h2, .arow b, .wrow b, .grphead .gname { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.opt, .tbtn span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

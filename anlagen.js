@@ -2,7 +2,7 @@
    Wird vor app.js geladen; alles hier wird erst beim Aufruf benutzt. */
 
 const ANL_BLUE = '#234B8A';
-const ANL_TYPES = ['Schacht', 'Schieber', 'Hydrant', 'Pumpe', 'Strom', 'Beregnung', 'Leitung'];
+const ANL_TYPES = ['Schacht', 'Schieber', 'Strom', 'Beregnung', 'Leitung'];
 const ANL_ICON = {
   Schacht: '<circle cx="12" cy="12" r="8"/><path d="M6.5 9h11M5 12h14M6.5 15h11"/>',
   Schieber: '<path d="M3 7v10l9-5zM21 7v10l-9-5z"/><path d="M12 12V4M9 4h6"/>',
@@ -219,11 +219,11 @@ async function viewAnlagen() {
   const present = [...new Set(anl.map((a) => a.typ))];
   if (anlFilter !== 'Alle' && !present.includes(anlFilter)) anlFilter = 'Alle';
   const shown = anl.filter((a) => anlFilter === 'Alle' || a.typ === anlFilter);
-  const keyOf = (a) => (a.wieseId === ANDERES ? ANDERES : a.wieseId && byId[a.wieseId] ? a.wieseId : '_ohne');
+  const keyOf = (a) => (a.wieseId === ANDERES ? ANDERES : a.wieseId && byId[a.wieseId] ? a.wieseId : a.wieseName ? 'n:' + a.wieseName : '_ohne');
   const groups = new Map();
   for (const a of shown) { const k = keyOf(a); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
-  const order = [...wiesen.map((w) => w.id).filter((k) => groups.has(k)), ...(groups.has(ANDERES) ? [ANDERES] : []), ...(groups.has('_ohne') ? ['_ohne'] : [])];
-  const nameOf = (k) => (k === ANDERES ? 'Hof / Anderes' : k === '_ohne' ? 'Ohne Wiese' : byId[k].name);
+  const order = [...wiesen.map((w) => w.id).filter((k) => groups.has(k)), ...[...groups.keys()].filter((k) => k.startsWith('n:')).sort(), ...(groups.has(ANDERES) ? [ANDERES] : []), ...(groups.has('_ohne') ? ['_ohne'] : [])];
+  const nameOf = (k) => (k === ANDERES ? 'Hof / Anderes' : k === '_ohne' ? 'Ohne Wiese' : k.startsWith('n:') ? k.slice(2) : byId[k].name);
   const newId = sessionStorage.getItem('wbNew'); sessionStorage.removeItem('wbNew');
   const row = (a) => `<a class="arow ${a.id === newId ? 'is-new' : ''}" href="#${a.typ === 'Leitung' ? 'leitung' : 'anlage'}/${a.id}">
       <span class="anlicon" style="background:${a.typ === 'Leitung' ? (a.color || ANL_BLUE) : ANL_BLUE}">${anlIcon(a.typ, 24)}</span>
@@ -277,6 +277,7 @@ async function viewAnlageForm(editId) {
     ad = d && !d._edit ? d : { id: uid(), typ: 'Schacht', name: nextName('Schacht', anl), nameTouched: false, wieseId: null, wieseManual: false, lage: '', lat: null, lng: null, acc: null, locManual: false, photoIds: [], dim: '', tiefe: '', notiz: '' };
   }
   await DB.setMeta('anlDraft', ad);
+  mState = 'idle';
   if (ad._edit) types = types.filter((t) => t !== 'Leitung');
   const isEdit = !!ad._edit;
 
@@ -332,7 +333,11 @@ async function viewAnlageForm(editId) {
       const t = b.dataset.t;
       b.onclick = async () => {
         if (b._long) { b._long = false; return; }
-        if (t === 'Leitung') { await DB.setMeta('anlDraft', null); ad = null; go('#leitung-neu'); return; }
+        if (t === 'Leitung') {
+          if (ad.photoIds.length && !confirm('Zu „Leitung“ wechseln? Die Fotos dieser Anlage werden verworfen.')) return;
+          for (const pid of ad.photoIds) await DB.del('photos', pid);
+          await DB.setMeta('anlDraft', null); ad = null; go('#leitung-neu'); return;
+        }
         ad.typ = t;
         if (!ad.nameTouched) { ad.name = nextName(t, anl, ad.id); $('#aName').value = ad.name; }
         saveAdSoon(); renderTypes();
@@ -479,7 +484,7 @@ async function viewAnlageForm(editId) {
     await DB.put('anlagen', { id: ad.id, deleted: true, updatedAt: now() });
     ad = null; await DB.setMeta('anlDraft', null); toast('Gelöscht'); go('#anlagen');
   };
-  leaveHooks.push(() => { stopM(); if (ad) DB.setMeta('anlDraft', ad); });
+  leaveHooks.push(() => { stopM(); mState = 'idle'; if (ad) DB.setMeta('anlDraft', ad); });
 }
 
 /* ---------- 9 · Anlage-Detail ---------- */
@@ -495,7 +500,7 @@ async function viewAnlageDetail(id) {
     <main class="content form">
       <section class="sec"><div id="dPhotos"></div></section>
       <dl class="facts">
-        <div><dt>Lage</dt><dd>${esc([wn, a.lage].filter(Boolean).join(' · ') || '–')}${a.lat != null ? `<br><span class="small">${a.locManual ? 'Auf Karte gesetzt' : 'Eingemessen ±' + a.acc + ' m'}</span>` : '<br><span class="small">Kein Standort</span>'}</dd></div>
+        <div><dt>Lage</dt><dd>${esc([wn, a.lage].filter(Boolean).join(' · ') || '–')}${a.lat != null ? `<br><span class="small">${esc(fixSummary(a))}</span>` : '<br><span class="small">Kein Standort</span>'}</dd></div>
         ${a.dim || a.tiefe ? `<div class="grid2">${a.dim ? `<div><dt>Dimension</dt><dd>${esc(a.dim)}</dd></div>` : '<span></span>'}${a.tiefe ? `<div><dt>Tiefe</dt><dd>${esc(a.tiefe)}</dd></div>` : ''}</div>` : ''}
         ${a.notiz ? `<div><dt>Notiz</dt><dd>${esc(a.notiz)}</dd></div>` : ''}
         <div><dt>Erfasst</dt><dd>${esc(fmtDate(a.createdAt))}${a.author ? ' von ' + esc(a.author) : ''}</dd></div>
@@ -518,7 +523,9 @@ let ld = null;
 const saveLd = () => DB.setMeta('lineDraft', ld);
 
 async function viewLeitungDraw() {
-  ld = (await DB.getMeta('lineDraft', null)) || { id: uid(), color: LINE_COLORS[0][1], colorName: LINE_COLORS[0][0], points: [], mode: 'tap' };
+  const resumed = await DB.getMeta('lineDraft', null);
+  if (resumed && resumed.points.length) setTimeout(() => toast(`Angefangene Leitung fortgesetzt (${resumed.points.length} Punkte)`, 3200), 400);
+  ld = resumed || { id: uid(), color: LINE_COLORS[0][1], colorName: LINE_COLORS[0][0], points: [], mode: 'tap' };
   const anl = await getAnlagen();
   app.innerHTML = `
     ${topbarBlue({ title: 'Leitung einzeichnen', back: '#anlagen' })}
@@ -775,10 +782,10 @@ async function resolvePeil(id) {
     if (parts[0] === 'l') {
       const k = +parts[2] || 0, p = (a.points || [])[k];
       if (!p) return null;
-      return { lat: p.lat, lng: p.lng, title: a.name, sub: `Punkt ${k + 1} von ${a.points.length}`, back: '#leitung/' + a.id, photoId: (p.photoIds || [])[0], info: p.note || a.notiz || '', anlage: a };
+      return { lat: p.lat, lng: p.lng, title: a.name, sub: `Punkt ${k + 1} von ${a.points.length}`, back: '#leitung/' + a.id, photoId: (p.photoIds || [])[0], info: p.note || a.notiz || '', anlage: a, pointIdx: k, fixable: true };
     }
     if (a.lat == null) return null;
-    return { lat: a.lat, lng: a.lng, title: a.name, sub: anlSub(a, byId), back: '#anlage/' + a.id, photoId: (a.photoIds || [])[0], info: [a.tiefe && 'Tiefe ' + a.tiefe, a.notiz].filter(Boolean).join(' · '), anlage: a };
+    return { lat: a.lat, lng: a.lng, title: a.name, sub: anlSub(a, byId), back: '#anlage/' + a.id, photoId: (a.photoIds || [])[0], info: [a.tiefe && 'Tiefe ' + a.tiefe, a.notiz].filter(Boolean).join(' · '), anlage: a, fixable: true };
   }
   const e = await DB.get('entries', id);
   if (!e || e.deleted || e.lat == null) return null;
@@ -988,4 +995,51 @@ async function viewMehr() {
     }
     render();
   };
+}
+
+/* ---------- Position nachbessern (mehrere Messungen an verschiedenen Tagen mitteln) ---------- */
+const median = (xs) => { const v = [...xs].sort((a, b) => a - b); const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+function fixesOf(o) {
+  if (o.fixes && o.fixes.length) return o.fixes;
+  if (o.lat == null) return [];
+  return [{ lat: o.lat, lng: o.lng, acc: o.acc || (o.locManual ? 3 : 5), at: o.createdAt || o.updatedAt || now(), manual: !!o.locManual }];
+}
+function combineFixes(fixes) {
+  let use = fixes;
+  if (fixes.length >= 3) {
+    const med = { lat: median(fixes.map((f) => f.lat)), lng: median(fixes.map((f) => f.lng)) };
+    const ds = fixes.map((f) => distM(f, med));
+    const md = median(ds);
+    const kept = fixes.filter((f, i) => ds[i] <= Math.max(3, md * 2.5));
+    if (kept.length >= 2) use = kept;
+  }
+  const ws = use.map((f) => 1 / Math.max(2, f.acc || 5) ** 2);
+  const W = ws.reduce((x, y) => x + y, 0);
+  const lat = use.reduce((x, f, i) => x + f.lat * ws[i], 0) / W;
+  const lng = use.reduce((x, f, i) => x + f.lng * ws[i], 0) / W;
+  const spread = Math.sqrt(use.reduce((x, f) => x + distM(f, { lat, lng }) ** 2, 0) / use.length);
+  const acc = Math.max(1, Math.round(Math.max(1 / Math.sqrt(W), spread / Math.sqrt(use.length)) * 10) / 10);
+  const days = new Set(fixes.map((f) => (f.at || '').slice(0, 10))).size;
+  return { lat, lng, acc, n: fixes.length, used: use.length, days };
+}
+const fmtAcc = (a) => String(a).replace('.', ',');
+function fixSummary(o) {
+  const f = fixesOf(o);
+  if (!f.length) return 'Kein Standort';
+  if (f.length === 1) return f[0].manual ? 'Auf Karte gesetzt' : `Eingemessen ±${fmtAcc(Math.round(f[0].acc))} m`;
+  const c = combineFixes(f);
+  return `${c.n} Messungen an ${c.days} ${c.days === 1 ? 'Tag' : 'Tagen'} · ca. ±${fmtAcc(c.acc)} m`;
+}
+// Neue Messung speichern; gibt neue Position + Verschiebung zurück
+async function addFix(T, fix) {
+  const a = await DB.get('anlagen', T.anlage.id);
+  const target = T.pointIdx != null ? a.points[T.pointIdx] : a;
+  const before = { lat: target.lat, lng: target.lng };
+  target.fixes = [...fixesOf(target), fix];
+  const c = combineFixes(target.fixes);
+  target.lat = c.lat; target.lng = c.lng; target.acc = c.acc; target.locManual = false;
+  if (T.pointIdx === 0) { a.lat = c.lat; a.lng = c.lng; }
+  a.updatedAt = now();
+  await DB.put('anlagen', a);
+  return { ...c, shift: before.lat != null ? distM(before, c) : 0 };
 }

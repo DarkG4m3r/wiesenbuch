@@ -1,7 +1,7 @@
 /* Wiesenbuch – Notizen für die Wiese
    Version 1: läuft komplett offline am Handy (IndexedDB). */
 
-const APP_VERSION = '0.2.2';
+const APP_VERSION = '0.2.3';
 const ANDERES = '_anderes';
 const CATS = ['Säule', 'Draht', 'Hagelnetz', 'Bewässerung', 'Baum', 'Sonstiges'];
 const MAP_START = { lat: 46.628, lng: 10.776, zoom: 13 }; // Vinschgau (Schlanders)
@@ -186,7 +186,7 @@ function locateOnce(opts = {}) {
 function topbar({ title, sub, back, right }) {
   return `<header class="topbar">
     ${back ? `<a class="iconbtn" href="${back}" aria-label="Zurück">${I.back}</a>` : ''}
-    <h1>${esc(title)}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</h1>
+    <h1><span class="ttl">${esc(title)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</h1>
     ${right || ''}
   </header>`;
 }
@@ -713,7 +713,7 @@ async function viewDetail(id) {
   app.innerHTML = `
     ${topbar({ title: entryTitle(e), back: '#liste', right: `<a class="iconbtn filled" href="#bearbeiten/${e.id}" aria-label="Bearbeiten">${I.edit}</a>` })}
     <main class="content form">
-      ${e.photoIds && e.photoIds.length ? `<div class="gallery">${e.photoIds.map((p) => `<img data-photo="${p}" alt="Foto">`).join('')}</div>` : ''}
+      ${e.photoIds && e.photoIds.length ? `<div class="gallery">${e.photoIds.map((p, i) => `<button class="galbtn" data-i="${i}" aria-label="Foto ${i + 1} groß anzeigen"><img data-photo="${p}" alt=""></button>`).join('')}</div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${done ? '<span class="badge ok">Erledigt</span>' : e.prio === 'dringend' ? '<span class="badge">Dringend</span>' : '<span class="pill">Offen</span>'}
       </div>
@@ -734,6 +734,7 @@ async function viewDetail(id) {
       ${hasLoc ? `<a class="btn" href="#karte" id="btnOnMap">${I.map}Auf Karte zeigen</a>` : ''}
     </main>`;
   $$('img[data-photo]').forEach(async (img) => { const u = await photoUrl(img.dataset.photo); if (u) img.src = u; });
+  $$('.galbtn').forEach((b) => b.onclick = () => openPhotoViewer(e.photoIds, +b.dataset.i));
   $('#btnDone').addEventListener('click', async () => {
     const author = await DB.getMeta('author', '');
     const upd = done ? { ...e, status: 'offen', erledigtAt: null, erledigtVon: null, updatedAt: now() }
@@ -801,7 +802,7 @@ async function viewPeilen(id) {
     <div class="peil ${T.anlage ? 'blue' : ''}">
       <div class="ptop">
         <a class="iconbtn" href="${T.back}" aria-label="Zurück">${I.back}</a>
-        <h1>${esc(T.title)}<span class="sub">${esc(T.sub)}</span></h1>
+        <h1><span class="ttl">${esc(T.title)}</span><span class="sub">${esc(T.sub)}</span></h1>
       </div>
       <div class="pmain" aria-live="polite">
         <div class="ring" id="pRing">
@@ -813,6 +814,7 @@ async function viewPeilen(id) {
         <button class="btn light hidden" id="pCompass" style="min-height:48px">Kompass einschalten</button>
       </div>
       <div class="pbottom">
+        ${T.fixable ? '<div class="pfix hidden" id="pFix" aria-live="polite"></div>' : ''}
         ${T.info || T.photoId ? `<div class="pneed">${T.photoId ? `<img data-photo="${T.photoId}" alt="Foto">` : ''}<span>${esc(T.info)}</span></div>` : ''}
         <div class="grid2">
           <a class="btn light" href="#karte" id="pMap">${I.map}Auf Karte</a>
@@ -834,6 +836,7 @@ async function viewPeilen(id) {
     const near = d <= Math.max(6, Math.min(pos.acc || 0, 12));
     const hasCompass = heading != null && Date.now() - lastHeadingAt < 3000;
     $('#pGmaps').classList.toggle('hidden', d < 800);
+    if (T.fixable && fixState === 'idle') $('#pFix').classList.toggle('hidden', d > 30);
 
     if (near) {
       if (!wasNear) { wasNear = true; buzz([120, 80, 120]); }
@@ -874,6 +877,7 @@ async function viewPeilen(id) {
   if (navigator.geolocation) {
     watch = navigator.geolocation.watchPosition((p) => {
       pos = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+      if (fixState === 'run' && p.coords.accuracy <= 30) fixSamples.push({ ...pos });
       draw();
     }, (err) => {
       $('#pDist').textContent = '–';
@@ -919,6 +923,49 @@ async function viewPeilen(id) {
     if (!ok) toast('Kompass nicht erlaubt – Pfeil zeigt bei Norden oben');
   });
   $('#pMap').addEventListener('click', () => sessionStorage.setItem(T.entry ? 'wbFocusEntry' : 'wbFocusAnlage', (T.entry || T.anlage).id));
+  // Position nachbessern: 30 s stillstehen, Messung zu den bisherigen dazunehmen
+  let fixState = 'idle', fixSamples = [], fixTimer = null, fixT0 = 0, fixResult = null;
+  const FIX_SEC = 30;
+  const renderFix = () => {
+    const box = $('#pFix'); if (!box) return;
+    if (fixState === 'idle') {
+      box.innerHTML = `<button class="btn light" id="pFixGo">${I.locate}Position nachbessern</button>
+        <span class="small">Bisher: ${esc(fixSummary(T.pointIdx != null ? T.anlage.points[T.pointIdx] : T.anlage).replace(/^Eingemessen/, 'eingemessen').replace(/^Auf Karte/, 'auf Karte'))} · ${FIX_SEC} s stillstehen</span>`;
+      $('#pFixGo').onclick = startFix;
+    } else if (fixState === 'run') {
+      const sec = Math.min(FIX_SEC, Math.round((Date.now() - fixT0) / 1000));
+      box.innerHTML = `<b>Messe … ${sec} von ${FIX_SEC} s – stillstehen</b>
+        <div class="pbar"><div style="width:${(sec / FIX_SEC) * 100}%"></div></div>
+        <button class="linkbtn" id="pFixStop">Abbrechen</button>`;
+      $('#pFixStop').onclick = () => { clearInterval(fixTimer); fixState = 'idle'; renderFix(); };
+    } else {
+      box.innerHTML = fixResult
+        ? `<b class="pfixok">${I.check}Position verbessert</b>
+           <span class="small">${fixResult.n} Messungen an ${fixResult.days} ${fixResult.days === 1 ? 'Tag' : 'Tagen'} · jetzt ca. ±${fmtAcc(fixResult.acc)} m · Pin um ${fmtAcc(Math.round(fixResult.shift * 10) / 10)} m verschoben</span>`
+        : `<b>Zu wenig GPS-Werte</b><span class="small">Kurz warten, frei unter den Himmel stellen, nochmal versuchen.</span><button class="btn light" id="pFixGo">Nochmal</button>`;
+      const again = $('#pFixGo'); if (again) again.onclick = startFix;
+    }
+  };
+  function startFix() {
+    fixState = 'run'; fixSamples = []; fixT0 = Date.now(); renderFix();
+    fixTimer = setInterval(async () => {
+      if (Date.now() - fixT0 < FIX_SEC * 1000) { renderFix(); return; }
+      clearInterval(fixTimer);
+      if (fixSamples.length < 5) { fixResult = null; fixState = 'done'; renderFix(); return; }
+      const w = fixSamples.map((x) => 1 / Math.max(2, x.acc) ** 2), W = w.reduce((a, b) => a + b, 0);
+      const fix = {
+        lat: fixSamples.reduce((a, x, i) => a + x.lat * w[i], 0) / W,
+        lng: fixSamples.reduce((a, x, i) => a + x.lng * w[i], 0) / W,
+        acc: Math.round(median(fixSamples.map((x) => x.acc)) * 10) / 10, at: now(), n: fixSamples.length,
+      };
+      fixResult = await addFix(T, fix);
+      T.lat = target.lat = fixResult.lat; T.lng = target.lng = fixResult.lng;
+      T.anlage = await DB.get('anlagen', T.anlage.id);
+      fixState = 'done'; buzz(30); renderFix();
+    }, 1000);
+  }
+  if (T.fixable) renderFix();
+
   const pDone = $('#pDone');
   if (pDone) pDone.addEventListener('click', async () => {
     const author = await DB.getMeta('author', '');
@@ -930,7 +977,7 @@ async function viewPeilen(id) {
   leaveHooks.push(() => {
     if (watch != null) navigator.geolocation.clearWatch(watch);
     window.removeEventListener(evName, onOrient, true);
-    clearInterval(iv); clearTimeout(permTimer);
+    clearInterval(iv); clearTimeout(permTimer); clearInterval(fixTimer);
     document.removeEventListener('visibilitychange', keepAwake);
     if (lock) lock.release().catch(() => {});
   });
