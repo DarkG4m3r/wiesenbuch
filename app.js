@@ -1,7 +1,7 @@
 /* Wiesenbuch – Notizen für die Wiese
    Version 1: läuft komplett offline am Handy (IndexedDB). */
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '0.2';
 const ANDERES = '_anderes';
 const CATS = ['Säule', 'Draht', 'Hagelnetz', 'Bewässerung', 'Baum', 'Sonstiges'];
 const MAP_START = { lat: 46.628, lng: 10.776, zoom: 13 }; // Vinschgau (Schlanders)
@@ -188,12 +188,7 @@ function topbar({ title, sub, back, right }) {
     ${right || ''}
   </header>`;
 }
-function bottomnav(active) {
-  return `<nav class="bottomnav" aria-label="Hauptnavigation">
-    <a href="#liste" class="${active === 'liste' ? 'on' : ''}">${I.list}Liste</a>
-    <a href="#karte" class="${active === 'karte' ? 'on' : ''}">${I.map}Karte</a>
-  </nav>`;
-}
+function bottomnav(active) { return bottomnavHtml(active); }
 
 let currentMap = null;
 let leaveHooks = [];
@@ -217,7 +212,13 @@ async function render() {
     else if (route === 'karte') await viewMap();
     else if (route === 'peilen') await viewPeilen(id);
     else if (route === 'wiesen') await viewWiesen();
-    else if (route === 'einstellungen') await viewSettings();
+    else if (route === 'mehr' || route === 'einstellungen') await viewMehr();
+    else if (route === 'anlagen') await viewAnlagen();
+    else if (route === 'anlage-neu') await viewAnlageForm(null);
+    else if (route === 'anlage-bearbeiten') await viewAnlageForm(id);
+    else if (route === 'anlage') await viewAnlageDetail(id);
+    else if (route === 'leitung-neu') await viewLeitungDraw();
+    else if (route === 'leitung') await viewLeitungDetail(id);
     else go('#liste');
   } catch (e) {
     console.error(e);
@@ -244,9 +245,14 @@ function cardHtml(e, byId, withWiese = true) {
 }
 
 async function viewList() {
-  const [entries, wiesen, listView, collapsed] = await Promise.all([
-    getEntries(), getWiesen(), DB.getMeta('listView', 'datum'), DB.getMeta('collapsed', {}),
+  const [entries, wiesen, listView, collapsed, lastExport] = await Promise.all([
+    getEntries(), getWiesen(), DB.getMeta('listView', 'datum'), DB.getMeta('collapsed', {}), DB.getMeta('lastExport', null),
   ]);
+  const oldest = entries.reduce((m, e) => (e.createdAt && e.createdAt < m ? e.createdAt : m), now());
+  const since = lastExport || oldest;
+  const backupDays = Math.floor((Date.now() - new Date(since)) / 86400000);
+  const backupHint = entries.length && backupDays >= 14
+    ? `<a class="hintbar" href="#mehr">Letzte Sicherung ${lastExport ? `vor ${backupDays} Tagen` : 'noch nie'} – jetzt sichern ›</a>` : '';
   const byId = Object.fromEntries(wiesen.map((w) => [w.id, w]));
   const offen = entries.filter((e) => e.status !== 'erledigt');
   const shown = listFilter === 'alle' ? entries : entries.filter((e) => (listFilter === 'offen' ? e.status !== 'erledigt' : e.status === 'erledigt'));
@@ -286,7 +292,7 @@ async function viewList() {
 
   const sub = offen.length === 1 ? '1 offener Punkt' : `${offen.length} offene Punkte`;
   app.innerHTML = `
-    ${topbar({ title: 'Wiesenbuch', sub, right: `<a class="iconbtn filled" href="#einstellungen" aria-label="Einstellungen">${I.gear}</a>` })}
+    ${topbar({ title: 'Wiesenbuch', sub })}
     <div class="headwrap">
       <div class="chips" role="group" aria-label="Filter">
         <button class="chip-h ${listFilter === 'offen' ? 'on' : ''}" data-f="offen">Offen (${offen.length})</button>
@@ -298,7 +304,7 @@ async function viewList() {
         <button class="${listView === 'wiese' ? 'on' : ''}" data-v="wiese" aria-pressed="${listView === 'wiese'}">Nach Wiese</button>
       </div>
     </div>
-    <main class="content" id="list">${body}</main>
+    <main class="content" id="list">${backupHint}${body}</main>
     <div class="fabwrap"><a class="fab" href="#neu">${I.plus}Neuer Eintrag</a></div>
     ${bottomnav('liste')}`;
 
@@ -361,6 +367,8 @@ async function viewForm(editId) {
           </div>
         </div>
       </section>
+
+      <div id="anlLink"></div>
 
       <section class="sec">
         <div class="sechead"><h2>Welche Wiese?</h2><a href="#wiesen" id="lnkWiesen">Wiesen bearbeiten</a></div>
@@ -435,6 +443,7 @@ async function viewForm(editId) {
   $('#btnRelocate').addEventListener('click', () => startLocating(true));
   $('#btnPick').addEventListener('click', () => pickOnMap());
   if (draft.lat == null) startLocating(false);
+  renderAnlLink();
 
   // Diktat
   setupMic();
@@ -487,6 +496,8 @@ async function addPhotoFiles(files) {
   }
   await DB.setMeta('draft', draft);
   renderPhotos();
+  askPersist();
+  setTimeout(() => enforcePhotoCap().catch(() => {}), 800);
 }
 $('#camInput').addEventListener('change', async (ev) => { await addPhotoFiles(ev.target.files); ev.target.value = ''; });
 $('#galInput').addEventListener('change', async (ev) => { await addPhotoFiles(ev.target.files); ev.target.value = ''; });
@@ -503,6 +514,7 @@ function startLocating(force) {
     if (draft.lat == null || draft.acc == null || acc <= draft.acc) {
       draft.lat = p.coords.latitude; draft.lng = p.coords.longitude; draft.acc = acc; draft.locManual = false;
       suggestWiese();
+      renderAnlLink();
       saveDraftSoon();
     }
     locState = 'ok'; updateLocUi();
@@ -593,7 +605,7 @@ async function pickOnMap(opts = {}) {
       const c = map.getCenter(); close();
       if (opts.onPick) { opts.onPick(c); resolve(c); return; }
       draft.lat = c.lat; draft.lng = c.lng; draft.acc = null; draft.locManual = true;
-      stopLocating(); locState = 'ok'; updateLocUi(); suggestWiese(); saveDraftSoon();
+      stopLocating(); locState = 'ok'; updateLocUi(); suggestWiese(); renderAnlLink(); saveDraftSoon();
       resolve(c);
     };
   });
@@ -652,6 +664,7 @@ async function saveDraft() {
     prio: draft.prio || 'normal',
     lat: draft.lat ?? null, lng: draft.lng ?? null, acc: draft.acc ?? null, locManual: !!draft.locManual,
     photoIds: [...draft.photoIds],
+    anlageId: draft.anlageId || null,
   };
   if (old) { for (const pid of old.photoIds || []) if (!entry.photoIds.includes(pid)) await DB.del('photos', pid); }
   await DB.put('entries', entry);
@@ -669,6 +682,7 @@ async function viewDetail(id) {
   const byId = Object.fromEntries(wiesen.map((w) => [w.id, w]));
   const done = e.status === 'erledigt';
   const hasLoc = e.lat != null;
+  const anl = e.anlageId ? await DB.get('anlagen', e.anlageId) : null;
   app.innerHTML = `
     ${topbar({ title: entryTitle(e), back: '#liste', right: `<a class="iconbtn filled" href="#bearbeiten/${e.id}" aria-label="Bearbeiten">${I.edit}</a>` })}
     <main class="content form">
@@ -678,6 +692,7 @@ async function viewDetail(id) {
       </div>
       <dl class="facts">
         <div><dt>Wo</dt><dd>${esc(wieseLabel(e, byId))}${hasLoc ? `<br><span class="small">${e.locManual ? 'Auf Karte gesetzt' : 'GPS ±' + e.acc + ' m'}</span>` : ''}</dd></div>
+        ${anl && !anl.deleted ? `<div><dt>Anlage</dt><dd><a href="#${anl.typ === 'Leitung' ? 'leitung' : 'anlage'}/${anl.id}">${esc(anl.name)}</a></dd></div>` : ''}
         ${e.todo ? `<div><dt>Zu erledigen</dt><dd>${esc(e.todo)}</dd></div>` : ''}
         ${e.beschreibung ? `<div><dt>Beschreibung</dt><dd>${esc(e.beschreibung)}</dd></div>` : ''}
         ${e.braucht ? `<div><dt>Wird gebraucht</dt><dd>${esc(e.braucht)}</dd></div>` : ''}
@@ -748,19 +763,16 @@ function compassWord(deg) {
 const fmtDist = (d) => (d < 1000 ? `${Math.round(d)} m` : `${(d / 1000).toFixed(1).replace('.', ',')} km`);
 
 async function viewPeilen(id) {
-  const e = await DB.get('entries', id);
-  if (!e || e.deleted) return go('#liste');
-  if (e.lat == null) { toast('Dieser Eintrag hat keinen Standort'); return go(`#eintrag/${id}`); }
-  const wiesen = await getWiesen();
-  const byId = Object.fromEntries(wiesen.map((w) => [w.id, w]));
-  const target = { lat: e.lat, lng: e.lng };
+  const T = await resolvePeil(id);
+  if (!T) { toast('Kein Standort vorhanden'); return go('#liste'); }
+  const target = { lat: T.lat, lng: T.lng };
   const arrowSvg = '<svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l7 18-7-4-7 4z" fill="#fff"/></svg>';
 
   app.innerHTML = `
-    <div class="peil">
+    <div class="peil ${T.anlage ? 'blue' : ''}">
       <div class="ptop">
-        <a class="iconbtn" href="#eintrag/${e.id}" aria-label="Zurück">${I.back}</a>
-        <h1>${esc(entryTitle(e))}<span class="sub">${esc(wieseLabel(e, byId))}</span></h1>
+        <a class="iconbtn" href="${T.back}" aria-label="Zurück">${I.back}</a>
+        <h1>${esc(T.title)}<span class="sub">${esc(T.sub)}</span></h1>
       </div>
       <div class="pmain" aria-live="polite">
         <div class="ring" id="pRing">
@@ -772,12 +784,12 @@ async function viewPeilen(id) {
         <button class="btn light hidden" id="pCompass" style="min-height:48px">Kompass einschalten</button>
       </div>
       <div class="pbottom">
-        ${e.braucht || (e.photoIds && e.photoIds.length) ? `<div class="pneed">${e.photoIds && e.photoIds.length ? `<img data-photo="${e.photoIds[0]}" alt="Foto">` : ''}<span>${e.braucht ? 'Braucht: ' + esc(e.braucht) : esc(e.beschreibung || '')}</span></div>` : ''}
+        ${T.info || T.photoId ? `<div class="pneed">${T.photoId ? `<img data-photo="${T.photoId}" alt="Foto">` : ''}<span>${esc(T.info)}</span></div>` : ''}
         <div class="grid2">
           <a class="btn light" href="#karte" id="pMap">${I.map}Auf Karte</a>
-          <button class="btn white" id="pDone">${I.check}Erledigt</button>
+          ${T.entry ? `<button class="btn white" id="pDone">${I.check}Erledigt</button>` : `<a class="btn white" href="${T.back}">Details</a>`}
         </div>
-        <a class="linkbtn hidden" id="pGmaps" href="https://www.google.com/maps/dir/?api=1&destination=${e.lat},${e.lng}&travelmode=walking" target="_blank" rel="noopener">Weit weg? In Google Maps öffnen</a>
+        <a class="linkbtn hidden" id="pGmaps" href="https://www.google.com/maps/dir/?api=1&destination=${T.lat},${T.lng}&travelmode=walking" target="_blank" rel="noopener">Weit weg? In Google Maps öffnen</a>
       </div>
     </div>`;
   const img = $('.pneed img'); if (img) photoUrl(img.dataset.photo).then((u) => { if (u) img.src = u; });
@@ -801,7 +813,7 @@ async function viewPeilen(id) {
       $('#pDisc').innerHTML = `<div class="here">${I.check.replace('width="26" height="26"', 'width="56" height="56"')}</div>`;
       $('#pDist').textContent = 'Du bist da';
       $('#pDist').style.fontSize = '40px';
-      $('#pDir').textContent = `im Umkreis von ca. ${Math.max(5, Math.round(pos.acc || 5))} m – nach dem Foto schauen`;
+      $('#pDir').textContent = `im Umkreis von ca. ${Math.max(5, Math.round(pos.acc || 5))} m – ${T.anlage ? 'genau hier suchen' : 'nach dem Foto schauen'}`;
     } else {
       if (wasNear && d > Math.max(12, (pos.acc || 0) * 1.5)) wasNear = false;
       if (!wasNear) {
@@ -877,10 +889,11 @@ async function viewPeilen(id) {
     $('#pCompass').classList.add('hidden');
     if (!ok) toast('Kompass nicht erlaubt – Pfeil zeigt bei Norden oben');
   });
-  $('#pMap').addEventListener('click', () => sessionStorage.setItem('wbFocusEntry', e.id));
-  $('#pDone').addEventListener('click', async () => {
+  $('#pMap').addEventListener('click', () => sessionStorage.setItem(T.entry ? 'wbFocusEntry' : 'wbFocusAnlage', (T.entry || T.anlage).id));
+  const pDone = $('#pDone');
+  if (pDone) pDone.addEventListener('click', async () => {
     const author = await DB.getMeta('author', '');
-    await DB.put('entries', { ...e, status: 'erledigt', erledigtAt: now(), erledigtVon: author, updatedAt: now() });
+    await DB.put('entries', { ...T.entry, status: 'erledigt', erledigtAt: now(), erledigtVon: author, updatedAt: now() });
     toast('Erledigt ✓'); go('#liste');
   });
 
@@ -893,87 +906,12 @@ async function viewPeilen(id) {
   });
 }
 
-/* ---------- 3 · Karte ---------- */
-async function viewMap() {
-  const [entries, wiesen] = await Promise.all([getEntries(), getWiesen()]);
-  const byId = Object.fromEntries(wiesen.map((w) => [w.id, w]));
-  const showDone = sessionStorage.getItem('wbShowDone') === '1';
-  const list = entries.filter((e) => e.lat != null && (showDone || e.status !== 'erledigt'));
-  app.innerHTML = `
-    ${topbar({ title: 'Karte', sub: `${list.length} ${showDone ? 'Einträge' : 'offene Punkte'}`, right: `<button class="iconbtn filled" id="btnDoneToggle" aria-label="Erledigte ${showDone ? 'ausblenden' : 'einblenden'}" title="Erledigte ${showDone ? 'ausblenden' : 'einblenden'}">${I.check}</button>` })}
-    <div class="mapwrap">
-      <div id="map"></div>
-      <div class="mapctl">
-        <button id="btnLayer" aria-label="Luftbild oder Karte">${I.layers}</button>
-        <button id="btnMe" aria-label="Mein Standort">${I.locate}</button>
-      </div>
-      <div class="sheet hidden" id="sheet"></div>
-    </div>
-    ${bottomnav('karte')}`;
-
-  const map = await makeMap($('#map'));
-  currentMap = map;
-  const markers = {};
-  for (const e of list) {
-    const color = e.status === 'erledigt' ? '#7D877A' : e.prio === 'dringend' ? '#C2362B' : '#1F3D2B';
-    const mk = L.marker([e.lat, e.lng], { icon: pinIcon(color, e.prio === 'dringend' ? 40 : 34), title: entryTitle(e), keyboard: true }).addTo(map);
-    mk.on('click', () => showSheet(e));
-    markers[e.id] = mk;
-  }
-  for (const w of wiesen) {
-    if (w.lat == null) continue;
-    L.marker([w.lat, w.lng], { icon: L.divIcon({ className: 'pin-icon', html: `<span style="background:rgba(255,255,255,.9);font:700 13px Atkinson Hyperlegible,system-ui;padding:3px 8px;border-radius:6px;white-space:nowrap;color:#17201A">${esc(w.name)}</span>`, iconSize: null }), interactive: false }).addTo(map);
-  }
-
-  const focus = sessionStorage.getItem('wbFocusEntry');
-  sessionStorage.removeItem('wbFocusEntry');
-  const fe = focus && list.find((e) => e.id === focus);
-  if (fe) { map.setView([fe.lat, fe.lng], 18); showSheet(fe); }
-  else if (list.length) map.fitBounds(L.latLngBounds(list.map((e) => [e.lat, e.lng])).pad(0.3), { maxZoom: 18 });
-  else if (wiesen.some((w) => w.lat != null)) map.fitBounds(L.latLngBounds(wiesen.filter((w) => w.lat != null).map((w) => [w.lat, w.lng])).pad(0.3), { maxZoom: 17 });
-
-  let meMarker = null, meWatch = null;
-  if (navigator.geolocation) {
-    meWatch = navigator.geolocation.watchPosition((p) => {
-      const ll = [p.coords.latitude, p.coords.longitude];
-      if (!meMarker) meMarker = L.marker(ll, { icon: meIcon, interactive: false }).addTo(map); else meMarker.setLatLng(ll);
-      if (!list.length && !fe && !map._wbCentered) { map._wbCentered = true; map.setView(ll, 17); }
-    }, () => {}, { enableHighAccuracy: true, maximumAge: 15000 });
-    leaveHooks.push(() => navigator.geolocation.clearWatch(meWatch));
-  }
-
-  $('#btnLayer').onclick = () => map._wbToggle();
-  $('#btnMe').onclick = async () => {
-    if (meMarker) { map.setView(meMarker.getLatLng(), 18); return; }
-    try { const p = await locateOnce(); map.setView([p.lat, p.lng], 18); } catch (e) { toast('Standort nicht gefunden'); }
-  };
-  $('#btnDoneToggle').onclick = () => { sessionStorage.setItem('wbShowDone', showDone ? '0' : '1'); render(); };
-  map.on('click', () => $('#sheet').classList.add('hidden'));
-
-  async function showSheet(e) {
-    const s = $('#sheet');
-    let dist = '';
-    if (meMarker) { const d = distM(meMarker.getLatLng(), e); dist = ` · ${d < 1000 ? Math.round(d) + ' m' : (d / 1000).toFixed(1) + ' km'} entfernt`; }
-    s.innerHTML = `
-      <a class="card" href="#eintrag/${e.id}">
-        ${e.photoIds && e.photoIds.length ? `<img class="thumb" style="width:64px;height:64px" data-photo="${e.photoIds[0]}" alt="">` : ''}
-        <div class="body"><h2>${esc(entryTitle(e))}</h2>
-          <span class="l1">${esc(wieseLabel(e, byId))}${dist}</span>
-          ${e.braucht ? `<span class="l2">Braucht: ${esc(e.braucht)}</span>` : ''}</div>
-      </a>
-      <div class="grid2">
-        <a class="btn" href="#peilen/${e.id}">${I.target}Anpeilen</a>
-        <a class="btn solid" href="#eintrag/${e.id}">Details</a>
-      </div>`;
-    s.classList.remove('hidden');
-    const img = $('img[data-photo]', s); if (img) img.src = await photoUrl(img.dataset.photo);
-  }
-}
+/* Karte: siehe anlagen.js (viewMap) */
 
 /* ---------- 4 · Meine Wiesen ---------- */
 async function viewWiesen() {
   const [wiesen, entries] = await Promise.all([getWiesen(), getEntries()]);
-  const back = sessionStorage.getItem('wbReturn') || '#einstellungen';
+  const back = sessionStorage.getItem('wbReturn') || '#mehr';
   const offenBy = {};
   entries.forEach((e) => { if (e.status !== 'erledigt' && e.wieseId) offenBy[e.wieseId] = (offenBy[e.wieseId] || 0) + 1; });
   app.innerHTML = `
@@ -1058,56 +996,17 @@ function editWiese(w, offenBy) {
   };
 }
 
-/* ---------- Einstellungen, Sichern ---------- */
-async function viewSettings() {
-  const author = await DB.getMeta('author', '');
-  const lastExport = await DB.getMeta('lastExport', null);
-  const entries = await getEntries();
-  let storage = '';
-  try {
-    if (navigator.storage?.estimate) {
-      const est = await navigator.storage.estimate();
-      const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
-      storage = `${(est.usage / 1048576).toFixed(1)} MB belegt · ${persisted ? 'dauerhaft gespeichert ✓' : 'nicht dauerhaft geschützt'}`;
-    }
-  } catch (e) {}
-  app.innerHTML = `
-    ${topbar({ title: 'Einstellungen', back: '#liste' })}
-    <main class="content form">
-      <section class="boxed">
-        <h2>Wer benutzt dieses Handy?</h2>
-        <label class="lbl" for="sAuthor">Name (steht bei den Einträgen)</label>
-        <input class="inp" id="sAuthor" value="${esc(author)}" placeholder="z. B. Tata">
-        <button class="btn solid" id="sAuthorSave">Name speichern</button>
-      </section>
-      <a class="btn" href="#wiesen" id="sWiesen">${I.map}Meine Wiesen verwalten</a>
-      <section class="boxed">
-        <h2>Sichern</h2>
-        <p class="small" style="margin:0">Alle ${entries.length} Einträge mit Fotos als ZIP-Datei sichern – z. B. per WhatsApp schicken oder in die Cloud legen. ${lastExport ? 'Zuletzt gesichert: ' + esc(fmtDate(lastExport)) + '.' : 'Noch nie gesichert.'}</p>
-        <button class="btn solid" id="sExport">${I.share}Sicherung erstellen</button>
-        <button class="btn" id="sImport">Sicherung einspielen</button>
-        <p class="small" style="margin:0">Beim Einspielen wird zusammengeführt: Neuere Änderungen gewinnen, nichts wird doppelt.</p>
-      </section>
-      <section class="boxed">
-        <h2>Abgleich mit pCloud</h2>
-        <p class="small" style="margin:0">Kommt in Version 2: Einträge zwischen mehreren Handys teilen.</p>
-      </section>
-      <p class="small">Wiesenbuch ${APP_VERSION}${storage ? ' · ' + storage : ''}</p>
-    </main>`;
-  $('#sWiesen').onclick = () => sessionStorage.setItem('wbReturn', '#einstellungen');
-  $('#sAuthorSave').onclick = async () => { await DB.setMeta('author', $('#sAuthor').value.trim()); toast('Gespeichert'); };
-  $('#sExport').onclick = exportZip;
-  $('#sImport').onclick = () => $('#importInput').click();
-}
-
+/* ---------- Sichern (Mehr-Screen: siehe anlagen.js) ---------- */
 async function exportZip() {
   toast('Sicherung wird erstellt …', 6000);
   const zip = new JSZip();
   const entries = await DB.all('entries');
   const wiesen = await DB.all('wiesen');
   const photos = await DB.all('photos');
-  zip.file('wiesenbuch.json', JSON.stringify({ app: 'wiesenbuch', version: 1, exportedAt: now(), entries, wiesen, photos: photos.map((p) => ({ id: p.id, entryId: p.entryId, createdAt: p.createdAt })) }, null, 2));
-  const used = new Set(entries.flatMap((e) => e.photoIds || []));
+  const anlagen = await DB.all('anlagen');
+  const customTypes = await DB.getMeta('customTypes', []);
+  zip.file('wiesenbuch.json', JSON.stringify({ app: 'wiesenbuch', version: 2, appVersion: APP_VERSION, exportedAt: now(), entries, wiesen, anlagen, customTypes, photos: photos.map((p) => ({ id: p.id, entryId: p.entryId, createdAt: p.createdAt })) }, null, 2));
+  const used = new Set([...entries.flatMap((e) => e.photoIds || []), ...anlagen.flatMap((a) => [...(a.photoIds || []), ...(a.points || []).flatMap((p) => p.photoIds || [])])]);
   for (const p of photos) if (used.has(p.id)) zip.file(`fotos/${p.id}.jpg`, p.blob);
   const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
   const name = `wiesenbuch-${new Date().toISOString().slice(0, 10)}.zip`;
@@ -1130,7 +1029,23 @@ $('#importInput').addEventListener('change', async (ev) => {
     const jf = zip.file('wiesenbuch.json');
     if (!jf) throw new Error('Keine Wiesenbuch-Sicherung');
     const data = JSON.parse(await jf.async('string'));
-    let nE = 0, nW = 0;
+    let nE = 0, nW = 0, nA = 0;
+    const getPhoto = async (pid, owner) => {
+      if (await DB.get('photos', pid)) return;
+      const pf = zip.file(`fotos/${pid}.jpg`);
+      if (pf) await DB.put('photos', { id: pid, entryId: owner, blob: new Blob([await pf.async('arraybuffer')], { type: 'image/jpeg' }), createdAt: now() });
+    };
+    for (const a of data.anlagen || []) {
+      const old = await DB.get('anlagen', a.id);
+      if (!old || (a.updatedAt || '') > (old.updatedAt || '')) {
+        for (const pid of [...(a.photoIds || []), ...(a.points || []).flatMap((p) => p.photoIds || [])]) await getPhoto(pid, a.id);
+        await DB.put('anlagen', a); nA++;
+      }
+    }
+    if ((data.customTypes || []).length) {
+      const cur = await DB.getMeta('customTypes', []);
+      await DB.setMeta('customTypes', [...new Set([...cur, ...data.customTypes])]);
+    }
     for (const w of data.wiesen || []) {
       const old = await DB.get('wiesen', w.id);
       if (!old || (w.updatedAt || '') > (old.updatedAt || '')) { await DB.put('wiesen', w); nW++; }
@@ -1147,7 +1062,7 @@ $('#importInput').addEventListener('change', async (ev) => {
         await DB.put('entries', e); nE++;
       }
     }
-    toast(`Eingespielt: ${nE} Einträge, ${nW} Wiesen`);
+    toast(`Eingespielt: ${nE} Aufgaben, ${nA} Anlagen, ${nW} Wiesen`);
     render();
   } catch (err) {
     toast('Datei konnte nicht gelesen werden: ' + err.message, 4000);
@@ -1184,7 +1099,7 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (done || !hadController) return; done = true;
       // Neue Version: sofort neu laden, außer mitten im Eintragen/Anpeilen
-      if (/^#(neu|bearbeiten|peilen)/.test(location.hash)) toast('Neue Version da – wird beim nächsten Öffnen aktiv', 4000);
+      if (/^#(neu|bearbeiten|peilen|anlage-neu|anlage-bearbeiten|leitung-neu)/.test(location.hash)) toast('Neue Version da – wird beim nächsten Öffnen aktiv', 4000);
       else location.reload();
     });
   });

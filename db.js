@@ -1,7 +1,7 @@
 // Kleine IndexedDB-Hülle. Alles bleibt lokal am Gerät.
 const DB = (() => {
   const NAME = 'wiesenbuch';
-  const VERSION = 1;
+  const VERSION = 2;
   let dbp = null;
 
   function open() {
@@ -14,8 +14,9 @@ const DB = (() => {
         if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('wiesen')) db.createObjectStore('wiesen', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
+        if (!db.objectStoreNames.contains('anlagen')) db.createObjectStore('anlagen', { keyPath: 'id' });
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => { const db = req.result; db.onversionchange = () => db.close(); resolve(db); };
       req.onerror = () => reject(req.error);
     });
     return dbp;

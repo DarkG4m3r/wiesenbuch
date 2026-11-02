@@ -1,4 +1,4 @@
-# Wiesenbuch – Version 1
+# Wiesenbuch – Version 0.2
 
 Notiz-App für die Apfelwiese: Mängel mit Foto, Standort und Wiese festhalten.
 Läuft als PWA. Alle Daten bleiben offline am Handy, Sicherung als ZIP.
@@ -40,7 +40,8 @@ Läuft als PWA. Alle Daten bleiben offline am Handy, Sicherung als ZIP.
 | Datei | Inhalt |
 |---|---|
 | `index.html` | Grundgerüst |
-| `app.js` | Screens und Logik |
+| `app.js` | Aufgaben, Wiesen, Anpeilen, Sichern |
+| `anlagen.js` | Anlagen, Leitungen, Karte mit Kartenmenü, Mehr |
 | `db.js` | Speicher am Handy (IndexedDB) |
 | `sw.js` | Offline-Betrieb, Kartenkacheln |
 | `style.css` | Aussehen |
