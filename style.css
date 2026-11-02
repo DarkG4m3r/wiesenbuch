@@ -331,3 +331,97 @@ textarea.inp { resize: vertical; padding-right: 64px; }
 .menulist .l1 { font-size: 14px; }
 
 .facts .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+
+/* ===== 0.2.1: Animationen ===== */
+:root { --ease: cubic-bezier(.2, .8, .2, 1); }
+/* 1 · Seiten: tiefer von rechts, zurück von links, Tabs überblenden */
+.pg-fwd { animation: pgFwd .28s var(--ease); }
+.pg-back { animation: pgBack .28s var(--ease); }
+.pg-fade { animation: pgFade .2s ease; }
+@keyframes pgFwd { from { transform: translateX(28%); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes pgBack { from { transform: translateX(-18%); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes pgFade { from { opacity: 0; } to { opacity: 1; } }
+.mapwrap.pg-fwd, .mapwrap.pg-back { animation-name: pgFade; }
+
+/* Antippen: Welle */
+.card, .arow, .wrow, .btn, .opt, .tbtn, .grphead, .menulist > a, .menulist > button, .chip-h, .fab { position: relative; overflow: hidden; }
+.ripple { position: absolute; border-radius: 50%; background: currentColor; opacity: 0; pointer-events: none; transform: scale(0); animation: ripple .5s ease-out; }
+@keyframes ripple { 0% { opacity: .18; transform: scale(0); } 100% { opacity: 0; transform: scale(1); } }
+.card:active, .arow:active, .btn:active, .opt:active, .tbtn:active, .fab:active { transform: scale(.985); }
+.card, .arow, .btn, .opt, .tbtn, .fab { transition: transform .12s ease, background-color .15s ease, color .15s ease, border-color .15s ease; }
+
+/* 2 · Balken unter aktivem Tab */
+.bottomnav { position: fixed; }
+.bottomnav .tabind { position: absolute; bottom: calc(6px + env(safe-area-inset-bottom)); left: 12.5%; width: 32px; height: 4px; border-radius: 2px; background: var(--green); transition: left .22s var(--ease); }
+
+/* 3 · Gespeichert: Knopf wird Häkchen, neuer Eintrag leuchtet */
+.btn.saved > * , .btn.saved { color: transparent !important; }
+.btn.saved > svg { opacity: 0; }
+.btn.saved::after { content: ''; position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px;
+  background: no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5L20 7'/%3E%3C/svg%3E");
+  animation: chkPop .32s var(--ease); }
+.btn.saved:not(.solid):not(.big)::after { filter: brightness(0) saturate(100%) invert(18%) sepia(17%) saturate(1426%) hue-rotate(91deg); }
+@keyframes chkPop { 0% { transform: scale(.3); opacity: 0; } 60% { transform: scale(1.18); opacity: 1; } 100% { transform: scale(1); } }
+.is-new { animation: newIn .4s var(--ease), newGlow 1.6s ease .1s; }
+@keyframes newIn { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: none; } }
+@keyframes newGlow { 0%, 30% { background-color: #FFF3C4; } 100% { background-color: #fff; } }
+
+/* 4 · Erledigt: Karte gleitet weg, Zahl zählt herunter */
+.card.leaving { animation: cardGone .45s ease-in-out .25s forwards; max-height: 260px; }
+@keyframes cardGone {
+  0% { opacity: 1; transform: none; }
+  45% { opacity: 0; transform: translateX(70px); max-height: 260px; padding-top: 12px; padding-bottom: 12px; }
+  100% { opacity: 0; transform: translateX(70px); max-height: 0; padding-top: 0; padding-bottom: 0; margin-bottom: -14px; }
+}
+.grpbody .card.leaving { animation-name: cardGoneG; }
+@keyframes cardGoneG {
+  0% { opacity: 1; transform: none; }
+  45% { opacity: 0; transform: translateX(70px); max-height: 260px; padding-top: 12px; padding-bottom: 12px; }
+  100% { opacity: 0; transform: translateX(70px); max-height: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }
+}
+.tick { display: inline-block; animation: tick .3s var(--ease); }
+@keyframes tick { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* 5 · Fenster von unten */
+.modal { animation: pgFade .2s ease; }
+.modal:not(.full) .box, .mapmenu:not(.hidden), .sheet:not(.hidden) { animation: sheetUp .3s var(--ease); }
+.modal.full .box { animation: sheetUp .3s var(--ease); }
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
+.modal:not(.full) .box::before, .mapmenu::before { content: ''; display: block; width: 40px; height: 5px; border-radius: 3px; background: #C9CFC4; margin: -6px auto 4px; flex-shrink: 0; }
+
+/* 6 · Pin landet */
+.numpin { position: relative; }
+.numpin.drop, .mapmini svg.drop { animation: pinDrop .38s ease-out; }
+.numpin.drop::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 3px solid #C2362B; animation: pinRing .6s ease-out .2s forwards; opacity: 0; }
+@keyframes pinDrop { 0% { transform: translateY(-40px); opacity: 0; } 60% { transform: translateY(0); opacity: 1; } 78% { transform: translateY(-7px); } 100% { transform: none; } }
+@keyframes pinRing { 0% { transform: scale(.5); opacity: .8; } 100% { transform: scale(2.4); opacity: 0; } }
+
+/* 7 · Foto kommt dazu */
+.ph.pop { animation: chkPop .3s var(--ease); }
+.camflash { position: fixed; inset: 0; z-index: 5000; background: #fff; pointer-events: none; animation: camFlash .35s ease forwards; }
+@keyframes camFlash { 0% { opacity: .9; } 100% { opacity: 0; } }
+.viewer { animation: pgFade .2s ease; }
+
+/* 8 · Anpeilen: angekommen */
+.ring .here { animation: chkPop .4s var(--ease), pulse2 1.6s ease .4s infinite; }
+
+/* 9 · Einmessen & Hinweise */
+.mcircle.pulsing { animation: mPulse 1.2s ease-out infinite; }
+@keyframes mPulse { 0% { box-shadow: 0 0 0 0 rgba(35,75,138,.5); } 80%, 100% { box-shadow: 0 0 0 18px rgba(35,75,138,0); } }
+.mcircle.ok { background: var(--green); color: #fff; animation: chkPop .32s var(--ease); }
+.toast.in { animation: toastIn .25s var(--ease); }
+.toast.out { animation: toastOut .2s ease forwards; }
+@keyframes toastIn { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes toastOut { to { transform: translateY(12px); opacity: 0; } }
+
+/* Schalter in „Mehr“ */
+.menulist > .switch { display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 0 14px; border-bottom: 1px solid #EEF0EB; cursor: pointer; }
+.switch input { appearance: none; -webkit-appearance: none; width: 52px; height: 30px; border-radius: 15px; background: #C9CFC4; position: relative; flex-shrink: 0; transition: background .2s; margin: 0; }
+.switch input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .2s var(--ease); }
+.switch input:checked { background: var(--green); }
+.switch input:checked::after { transform: translateX(22px); }
+.switch input:focus-visible { outline: 3px solid #7FA88A; outline-offset: 2px; }
+
+/* Aus: Schalter in „Mehr“ oder „Animationen entfernen“ am Handy */
+html.no-anim *, html.no-anim *::before, html.no-anim *::after { animation: none !important; transition: none !important; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

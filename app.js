@@ -1,7 +1,7 @@
 /* Wiesenbuch – Notizen für die Wiese
    Version 1: läuft komplett offline am Handy (IndexedDB). */
 
-const APP_VERSION = '0.2';
+const APP_VERSION = '0.2.1';
 const ANDERES = '_anderes';
 const CATS = ['Säule', 'Draht', 'Hagelnetz', 'Bewässerung', 'Baum', 'Sonstiges'];
 const MAP_START = { lat: 46.628, lng: 10.776, zoom: 13 }; // Vinschgau (Schlanders)
@@ -69,9 +69,11 @@ function toast(msg, ms = 2600) {
   let t = $('.toast');
   if (!t) { t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
   t.textContent = msg;
-  t.classList.remove('hidden');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
+  t.classList.remove('hidden', 'out', 'in');
+  void t.offsetWidth;
+  t.classList.add('in');
+  toastTimer = setTimeout(() => { t.classList.add('out'); toastTimer = setTimeout(() => t.classList.add('hidden'), 200); }, ms);
 }
 
 function go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
@@ -201,9 +203,11 @@ function cleanup() {
 /* ---------- Router ---------- */
 async function render() {
   cleanup();
+  if (!WB.loaded) await loadPrefs();
   const h = location.hash.replace(/^#/, '') || 'liste';
   const [route, id] = h.split('/');
-  window.scrollTo(0, 0);
+  const sameView = fxPrevKey === h;
+  if (!sameView) window.scrollTo(0, 0);
   try {
     if (route === 'liste') await viewList();
     else if (route === 'neu') await viewForm(null);
@@ -219,7 +223,8 @@ async function render() {
     else if (route === 'anlage') await viewAnlageDetail(id);
     else if (route === 'leitung-neu') await viewLeitungDraw();
     else if (route === 'leitung') await viewLeitungDetail(id);
-    else go('#liste');
+    else { go('#liste'); return; }
+    animateEnter(h);
   } catch (e) {
     console.error(e);
     app.innerHTML = `${topbar({ title: 'Wiesenbuch', back: '#liste' })}<div class="content"><p class="empty">Da ist etwas schiefgelaufen.<br>${esc(e.message)}</p></div>`;
@@ -229,10 +234,11 @@ window.addEventListener('hashchange', render);
 
 /* ---------- 1 · Liste ---------- */
 let listFilter = 'offen';
+let listNewId = null, listGoneId = null;
 function cardHtml(e, byId, withWiese = true) {
   const sub = withWiese ? wieseLabel(e, byId) : (e.wieseId === ANDERES ? (e.ort || 'Hof / Anderes') : (e.reihe ? `Reihe ${e.reihe}` : ''));
   return `
-    <a class="card ${e.status === 'erledigt' ? 'done' : ''}" href="#eintrag/${e.id}">
+    <a class="card ${e.status === 'erledigt' && e.id !== listGoneId ? 'done' : ''} ${e.id === listNewId ? 'is-new' : ''} ${e.id === listGoneId ? 'leaving' : ''}" href="#eintrag/${e.id}">
       ${e.photoIds && e.photoIds.length ? `<img class="thumb" data-photo="${e.photoIds[0]}" alt="">` : `<div class="thumb">${I.camBig}</div>`}
       <div class="body">
         <div class="row"><h2>${esc(entryTitle(e))}</h2>
@@ -254,10 +260,15 @@ async function viewList() {
   const backupHint = entries.length && backupDays >= 14
     ? `<a class="hintbar" href="#mehr">Letzte Sicherung ${lastExport ? `vor ${backupDays} Tagen` : 'noch nie'} – jetzt sichern ›</a>` : '';
   const byId = Object.fromEntries(wiesen.map((w) => [w.id, w]));
+  listNewId = sessionStorage.getItem('wbNew'); sessionStorage.removeItem('wbNew');
+  listGoneId = animOn() && listFilter === 'offen' ? sessionStorage.getItem('wbGone') : null; sessionStorage.removeItem('wbGone');
   const offen = entries.filter((e) => e.status !== 'erledigt');
-  const shown = listFilter === 'alle' ? entries : entries.filter((e) => (listFilter === 'offen' ? e.status !== 'erledigt' : e.status === 'erledigt'));
+  const isDone = (e) => e.status === 'erledigt' && e.id !== listGoneId;
+  const shown = listFilter === 'alle' ? entries : entries.filter((e) => (listFilter === 'offen' ? !isDone(e) : e.status === 'erledigt'));
   // Offene: dringend zuerst
-  if (listFilter !== 'erledigt') shown.sort((a, b) => (a.status === 'erledigt') - (b.status === 'erledigt') || (b.prio === 'dringend') - (a.prio === 'dringend') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  if (listFilter !== 'erledigt') shown.sort((a, b) => isDone(a) - isDone(b) || (b.prio === 'dringend') - (a.prio === 'dringend') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  if (listGoneId && !shown.some((e) => e.id === listGoneId)) listGoneId = null;
+  const shownOpen = offen.length + (listGoneId ? 1 : 0);
 
   let body;
   if (!shown.length) {
@@ -273,7 +284,7 @@ async function viewList() {
     const nameOf = (k) => (k === ANDERES ? 'Hof / Anderes' : k === '_ohne' ? 'Ohne Wiese' : k.startsWith('n:') ? k.slice(2) : byId[k].name);
     body = order.map((k) => {
       const items = groups.get(k);
-      const nOpen = items.filter((e) => e.status !== 'erledigt').length;
+      const nOpen = items.filter((e) => !isDone(e)).length;
       const nUrg = items.filter((e) => e.status !== 'erledigt' && e.prio === 'dringend').length;
       const isOpen = !collapsed[k];
       return `<section class="grp">
@@ -290,12 +301,13 @@ async function viewList() {
     body = shown.map((e) => cardHtml(e, byId)).join('');
   }
 
-  const sub = offen.length === 1 ? '1 offener Punkt' : `${offen.length} offene Punkte`;
+  const subOf = (n) => (n === 1 ? '1 offener Punkt' : `${n} offene Punkte`);
+  const sub = subOf(shownOpen);
   app.innerHTML = `
     ${topbar({ title: 'Wiesenbuch', sub })}
     <div class="headwrap">
       <div class="chips" role="group" aria-label="Filter">
-        <button class="chip-h ${listFilter === 'offen' ? 'on' : ''}" data-f="offen">Offen (${offen.length})</button>
+        <button class="chip-h ${listFilter === 'offen' ? 'on' : ''}" data-f="offen">Offen (${shownOpen})</button>
         <button class="chip-h ${listFilter === 'erledigt' ? 'on' : ''}" data-f="erledigt">Erledigt</button>
         <button class="chip-h ${listFilter === 'alle' ? 'on' : ''}" data-f="alle">Alle</button>
       </div>
@@ -317,6 +329,15 @@ async function viewList() {
     const y = window.scrollY; await render(); window.scrollTo(0, y);
   }));
   $$('img[data-photo]').forEach(async (img) => { const u = await photoUrl(img.dataset.photo); if (u) img.src = u; });
+  const leaving = $('.card.leaving');
+  if (leaving) {
+    leaving.addEventListener('animationend', (ev) => {
+      if (ev.animationName !== 'cardGone') return;
+      leaving.remove();
+      const sb = $('.topbar .sub'); if (sb) { sb.textContent = subOf(offen.length); sb.classList.add('tick'); }
+      const ch = $('.chip-h[data-f="offen"]'); if (ch) ch.textContent = `Offen (${offen.length})`;
+    });
+  }
 }
 
 /* ---------- 2 · Neuer Eintrag / Bearbeiten ---------- */
@@ -475,7 +496,7 @@ async function renderPhotos() {
   const box = $('#photos');
   if (!box || !draft) return;
   if (!draft.photoIds.length) { box.innerHTML = `<div class="photoempty">Noch kein Foto</div>`; return; }
-  box.innerHTML = `<div class="photos">${draft.photoIds.map((id) => `<div class="ph"><img data-photo="${id}" alt="Foto"><button data-rm="${id}" aria-label="Foto entfernen">${I.x}</button></div>`).join('')}</div>`;
+  box.innerHTML = `<div class="photos">${draft.photoIds.map((id) => `<div class="ph ${freshPhotos.has(id) ? 'pop' : ''}"><img data-photo="${id}" alt="Foto"><button data-rm="${id}" aria-label="Foto entfernen">${I.x}</button></div>`).join('')}</div>`;
   $$('img[data-photo]', box).forEach(async (img) => { const u = await photoUrl(img.dataset.photo); if (u) img.src = u; });
   $$('[data-rm]', box).forEach((b) => b.addEventListener('click', async () => {
     const id = b.dataset.rm;
@@ -486,6 +507,7 @@ async function renderPhotos() {
   }));
 }
 
+const freshPhotos = new Set();
 async function addPhotoFiles(files) {
   if (!draft || !files || !files.length) return;
   for (const f of files) {
@@ -493,13 +515,15 @@ async function addPhotoFiles(files) {
     const id = uid();
     await DB.put('photos', { id, entryId: draft.id, blob, createdAt: now() });
     draft.photoIds.push(id);
+    freshPhotos.add(id);
   }
   await DB.setMeta('draft', draft);
   renderPhotos();
+  setTimeout(() => freshPhotos.clear(), 50);
   askPersist();
   setTimeout(() => enforcePhotoCap().catch(() => {}), 800);
 }
-$('#camInput').addEventListener('change', async (ev) => { await addPhotoFiles(ev.target.files); ev.target.value = ''; });
+$('#camInput').addEventListener('change', async (ev) => { if (ev.target.files.length) camFlash(); await addPhotoFiles(ev.target.files); ev.target.value = ''; });
 $('#galInput').addEventListener('change', async (ev) => { await addPhotoFiles(ev.target.files); ev.target.value = ''; });
 
 /* Standort */
@@ -511,6 +535,7 @@ function startLocating(force) {
   locState = 'searching'; updateLocUi();
   watchId = navigator.geolocation.watchPosition((p) => {
     const acc = Math.round(p.coords.accuracy);
+    if (draft.lat == null) { const pin = $('.mapmini svg'); if (pin) { pin.classList.remove('drop'); void pin.getBBox; pin.classList.add('drop'); } }
     if (draft.lat == null || draft.acc == null || acc <= draft.acc) {
       draft.lat = p.coords.latitude; draft.lng = p.coords.longitude; draft.acc = acc; draft.locManual = false;
       suggestWiese();
@@ -668,6 +693,8 @@ async function saveDraft() {
   };
   if (old) { for (const pid of old.photoIds || []) if (!entry.photoIds.includes(pid)) await DB.del('photos', pid); }
   await DB.put('entries', entry);
+  await savedFx($('#btnSave'));
+  if (!old) sessionStorage.setItem('wbNew', entry.id);
   draft = null; await DB.setMeta('draft', null);
   askPersist();
   toast('Gespeichert');
@@ -712,6 +739,8 @@ async function viewDetail(id) {
     const upd = done ? { ...e, status: 'offen', erledigtAt: null, erledigtVon: null, updatedAt: now() }
                      : { ...e, status: 'erledigt', erledigtAt: now(), erledigtVon: author, updatedAt: now() };
     await DB.put('entries', upd);
+    buzz(30);
+    if (!done) { sessionStorage.setItem('wbGone', e.id); if (animOn()) { const b = $('#btnDone'); b.classList.add('saved'); await sleep(300); } }
     toast(done ? 'Wieder offen' : 'Erledigt ✓');
     go(done ? `#eintrag/${e.id}` : '#liste');
   });
@@ -807,7 +836,7 @@ async function viewPeilen(id) {
     $('#pGmaps').classList.toggle('hidden', d < 800);
 
     if (near) {
-      if (!wasNear) { wasNear = true; if (navigator.vibrate) navigator.vibrate([120, 80, 120]); }
+      if (!wasNear) { wasNear = true; buzz([120, 80, 120]); }
       ring.classList.add('near');
       $('#pNorth').classList.add('hidden');
       $('#pDisc').innerHTML = `<div class="here">${I.check.replace('width="26" height="26"', 'width="56" height="56"')}</div>`;
@@ -894,6 +923,7 @@ async function viewPeilen(id) {
   if (pDone) pDone.addEventListener('click', async () => {
     const author = await DB.getMeta('author', '');
     await DB.put('entries', { ...T.entry, status: 'erledigt', erledigtAt: now(), erledigtVon: author, updatedAt: now() });
+    buzz(30); sessionStorage.setItem('wbGone', T.entry.id);
     toast('Erledigt ✓'); go('#liste');
   });
 
@@ -1104,5 +1134,6 @@ if ('serviceWorker' in navigator) {
     });
   });
 }
+initFx();
 render();
 firstRun();

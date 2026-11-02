@@ -55,6 +55,7 @@ function bottomnavHtml(active) {
     ${t('karte', '#karte', I.map, 'Karte')}
     ${t('anlagen', '#anlagen', anlIcon('Schacht', 24), 'Anlagen')}
     ${t('mehr', '#mehr', MORE_ICON, 'Mehr')}
+    <span class="tabind" aria-hidden="true"></span>
   </nav>`;
 }
 function topbarBlue(opts) { return topbar(opts).replace('class="topbar"', 'class="topbar blue"'); }
@@ -110,10 +111,11 @@ async function enforcePhotoCap() {
 }
 function mountPhotoGrid(el, o) {
   let ids = [...(o.ids || [])];
+  let fresh = new Set();
   const editable = o.editable !== false;
   const render = () => {
     el.innerHTML = `<div class="photos">
-      ${ids.map((id, i) => `<div class="ph"><button class="phopen" data-i="${i}" aria-label="Foto ${i + 1} groß anzeigen"><img data-photo="${id}" alt=""></button>${editable ? `<button class="phrm" data-rm="${id}" aria-label="Foto entfernen">${I.x}</button>` : ''}</div>`).join('')}
+      ${ids.map((id, i) => `<div class="ph ${fresh.has(id) ? 'pop' : ''}"><button class="phopen" data-i="${i}" aria-label="Foto ${i + 1} groß anzeigen"><img data-photo="${id}" alt=""></button>${editable ? `<button class="phrm" data-rm="${id}" aria-label="Foto entfernen">${I.x}</button>` : ''}</div>`).join('')}
       ${editable ? `<button class="ph add" data-add="cam">${I.cam}<span>Foto</span></button><button class="ph add" data-add="gal">${I.gal}<span>Galerie</span></button>` : ''}
     </div>${!ids.length && !editable ? '<p class="small">Keine Fotos</p>' : ''}`;
     $$('img[data-photo]', el).forEach(async (img) => { const u = await photoUrl(img.dataset.photo); if (u) img.src = u; });
@@ -125,9 +127,10 @@ function mountPhotoGrid(el, o) {
     $$('[data-add]', el).forEach((b) => b.onclick = async () => {
       const files = await pickFiles(b.dataset.add === 'cam');
       if (!files.length) return;
+      if (b.dataset.add === 'cam') camFlash();
       toast(files.length > 1 ? `${files.length} Fotos werden gespeichert …` : 'Foto wird gespeichert …', 1500);
       const nids = await storePhotos(files, o.ownerId);
-      ids.push(...nids); render(); o.onChange && o.onChange([...ids]);
+      ids.push(...nids); fresh = new Set(nids); render(); fresh = new Set(); o.onChange && o.onChange([...ids]);
     });
     $$('.phopen', el).forEach((b) => b.onclick = () => openPhotoViewer(ids, +b.dataset.i));
   };
@@ -221,7 +224,8 @@ async function viewAnlagen() {
   for (const a of shown) { const k = keyOf(a); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
   const order = [...wiesen.map((w) => w.id).filter((k) => groups.has(k)), ...(groups.has(ANDERES) ? [ANDERES] : []), ...(groups.has('_ohne') ? ['_ohne'] : [])];
   const nameOf = (k) => (k === ANDERES ? 'Hof / Anderes' : k === '_ohne' ? 'Ohne Wiese' : byId[k].name);
-  const row = (a) => `<a class="arow" href="#${a.typ === 'Leitung' ? 'leitung' : 'anlage'}/${a.id}">
+  const newId = sessionStorage.getItem('wbNew'); sessionStorage.removeItem('wbNew');
+  const row = (a) => `<a class="arow ${a.id === newId ? 'is-new' : ''}" href="#${a.typ === 'Leitung' ? 'leitung' : 'anlage'}/${a.id}">
       <span class="anlicon" style="background:${a.typ === 'Leitung' ? (a.color || ANL_BLUE) : ANL_BLUE}">${anlIcon(a.typ, 24)}</span>
       <span class="body"><b>${esc(a.name)}</b><span class="l1">${esc(anlSub(a, byId))}</span></span>
       ${openBy[a.id] ? `<span class="badge">${openBy[a.id]} ${openBy[a.id] > 1 ? 'Aufgaben' : 'Aufgabe'}</span>` : ''}
@@ -400,6 +404,13 @@ async function viewAnlageForm(editId) {
   const updM = (n) => {
     const t = $('#mTitle'), s = $('#mSub'), bar = $('#mBar');
     if (!t) return;
+    const mc = $('.mcircle');
+    if (mc) {
+      mc.classList.toggle('pulsing', mState === 'measuring');
+      const ok = mState !== 'measuring' && ad.lat != null;
+      if (ok && !mc.classList.contains('ok')) { mc.classList.add('ok'); mc.innerHTML = I.check; }
+      else if (!ok && mc.classList.contains('ok')) { mc.classList.remove('ok'); mc.innerHTML = I.locate; }
+    }
     if (mState === 'measuring') { t.textContent = 'Messe …'; s.textContent = n ? `${n} von 20 Werten · aktuell ±${ad.acc} m` : 'GPS sucht – direkt über die Anlage stellen'; bar.style.width = `${(n / 20) * 100}%`; }
     else if (ad.lat != null) { t.textContent = ad.locManual ? 'Auf Karte gesetzt' : 'Eingemessen ✓'; s.textContent = ad.locManual ? 'Position auf dem Luftbild festgelegt' : `Genauigkeit ca. ±${ad.acc} m`; bar.style.width = '100%'; }
     else if (mState === 'denied') { t.textContent = 'Kein Standort'; s.textContent = 'Standort-Erlaubnis fehlt'; bar.style.width = '0'; }
@@ -451,6 +462,7 @@ async function viewAnlageForm(editId) {
       createdAt: old?.createdAt || now(), author: old?.author || author, updatedAt: now(),
     };
     await DB.put('anlagen', a);
+    await savedFx($('#aSave'));
     ad = null; await DB.setMeta('anlDraft', null); askPersist();
     toast('Gespeichert'); go('#anlage/' + a.id);
   };
@@ -527,13 +539,14 @@ async function viewLeitungDraw() {
   for (const a of anl) if (a.typ !== 'Leitung' && a.lat != null) L.marker([a.lat, a.lng], { icon: anlMarkerIcon(a), interactive: false, opacity: 0.85 }).addTo(map);
   const line = L.polyline([], { color: ld.color, weight: 6, lineCap: 'round', lineJoin: 'round' }).addTo(map);
   const ptLayer = L.layerGroup().addTo(map);
-  let me = null, meMk = null, follow = true;
+  let me = null, meMk = null, follow = true, justAdded = false;
 
   const redraw = () => {
     line.setStyle({ color: ld.color });
     line.setLatLngs(ld.points.map((p) => [p.lat, p.lng]));
     ptLayer.clearLayers();
-    ld.points.forEach((p, i) => L.marker([p.lat, p.lng], { icon: numIcon(i + 1, (p.photoIds || []).length ? 'photo' : 'plain', ld.color), interactive: false }).addTo(ptLayer));
+    ld.points.forEach((p, i) => L.marker([p.lat, p.lng], { icon: numIcon(i + 1, (p.photoIds || []).length ? 'photo' : 'plain', ld.color, justAdded && i === ld.points.length - 1), interactive: false }).addTo(ptLayer));
+    justAdded = false;
     sheet();
   };
   const sheet = () => {
@@ -572,8 +585,8 @@ async function viewLeitungDraw() {
       p = { lat: me.lat, lng: me.lng, acc: Math.round(me.acc) };
     }
     ld.points.push({ note: '', photoIds: [], ...p });
+    buzz(30); justAdded = true;
     saveLd(); redraw();
-    if (navigator.vibrate) navigator.vibrate(40);
   };
   const setMode = (m) => {
     ld.mode = m; saveLd();
@@ -602,11 +615,11 @@ async function viewLeitungDraw() {
   window.addEventListener('resize', place);
   leaveHooks.push(() => window.removeEventListener('resize', place));
 }
-function numIcon(n, kind, color) {
+function numIcon(n, kind, color, drop) {
   const c = color || ANL_BLUE;
   const st = kind === 'sel' ? 'background:#C2362B;color:#fff;border:3px solid #fff;box-shadow:0 0 0 3px #C2362B'
     : kind === 'photo' ? `background:${c};color:#fff;border:3px solid #fff` : `background:#fff;color:${c};border:3px solid ${c}`;
-  return L.divIcon({ className: 'pin-icon', html: `<div class="numpin" style="${st}">${n}</div>`, iconSize: [34, 34], iconAnchor: [17, 17] });
+  return L.divIcon({ className: 'pin-icon', html: `<div class="numpin ${drop ? 'drop' : ''}" style="${st}">${n}</div>`, iconSize: [34, 34], iconAnchor: [17, 17] });
 }
 function anlMarkerIcon(a) {
   return L.divIcon({ className: 'pin-icon', html: `<div class="anl-mk" title="${esc(a.name)}">${anlIcon(a.typ, 18)}</div>`, iconSize: [36, 36], iconAnchor: [18, 18] });
@@ -657,7 +670,8 @@ async function lineDetailsModal(a) {
       lat: base.points[0].lat, lng: base.points[0].lng, updatedAt: now(),
     };
     await DB.put('anlagen', rec);
-    if (isNew) { ld = null; await DB.setMeta('lineDraft', null); }
+    await savedFx($('#lnSave', m));
+    if (isNew) { ld = null; await DB.setMeta('lineDraft', null); sessionStorage.setItem('wbNew', rec.id); }
     askPersist(); close(); toast('Gespeichert');
     if (isNew) go('#leitung/' + rec.id); else render();
   };
@@ -943,6 +957,10 @@ async function viewMehr() {
         <p class="small" style="margin:0">${entries.length} ${entries.length === 1 ? 'Aufgabe' : 'Aufgaben'}, ${anl.length} ${anl.length === 1 ? 'Anlage' : 'Anlagen'} und ${nPhotos} ${nPhotos === 1 ? 'Foto' : 'Fotos'} als ZIP – z. B. per WhatsApp schicken.</p>
         <div class="grid2"><button class="btn solid" id="sExport">Sichern</button><button class="btn" id="sImport">Einspielen</button></div>
       </section>
+      <section class="menulist">
+        <label class="switch"><span class="body"><b>Animationen</b><span class="l1">${reducedMotion.matches ? 'Am Handy ist „Animationen entfernen“ aktiv' : 'Weiche Übergänge und Rückmeldungen'}</span></span><input type="checkbox" id="sAnim" ${WB.anim ? 'checked' : ''}></label>
+        <label class="switch"><span class="body"><b>Vibration</b><span class="l1">Bei Gespeichert, Erledigt, Punkt gesetzt, Du bist da</span></span><input type="checkbox" id="sVibe" ${WB.vibe ? 'checked' : ''}></label>
+      </section>
       <section class="boxed">
         <label class="h" for="sAuthor" style="font-size:18px;font-weight:700">Wer benutzt dieses Handy?</label>
         <input class="inp" id="sAuthor" value="${esc(author)}" placeholder="z. B. Tata">
@@ -955,6 +973,8 @@ async function viewMehr() {
   $('#sAuthorSave').onclick = async () => { await DB.setMeta('author', $('#sAuthor').value.trim()); toast('Gespeichert'); render(); };
   $('#sExport').onclick = exportZip;
   $('#sImport').onclick = () => $('#importInput').click();
+  $('#sAnim').onchange = async (ev) => { WB.anim = ev.target.checked; await DB.setMeta('anim', WB.anim); applyAnimClass(); toast(WB.anim ? 'Animationen an' : 'Animationen aus'); };
+  $('#sVibe').onchange = async (ev) => { WB.vibe = ev.target.checked; await DB.setMeta('vibe', WB.vibe); if (WB.vibe) buzz(30); toast(WB.vibe ? 'Vibration an' : 'Vibration aus'); };
   $('#mTypes').onclick = async () => {
     if (!custom.length) { toast('Eigene Typen legst du bei „Neue Anlage“ → „Neuer Typ“ an', 3500); return; }
     const t = prompt(`Welchen Typ umbenennen oder löschen?\n${custom.join(', ')}`, custom[0]);

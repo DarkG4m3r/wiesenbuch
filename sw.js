@@ -1,12 +1,12 @@
 // Service Worker: hält die App offline verfügbar und merkt sich Kartenkacheln.
-const VERSION = 'wb-0.2';
+const VERSION = 'wb-0.2.1';
 const SHELL = `shell-${VERSION}`;
 const TILES = 'tiles-v1';
 const FONTS = 'fonts-v1';
 const MAX_TILES = 4000;
 
 const ASSETS = [
-  './', './index.html', './style.css', './app.js', './db.js', './anlagen.js', './manifest.webmanifest',
+  './', './index.html', './style.css', './app.js', './db.js', './anlagen.js', './fx.js', './manifest.webmanifest',
   './vendor/leaflet.js', './vendor/leaflet.css', './vendor/jszip.min.js',
   './vendor/images/layers.png', './vendor/images/layers-2x.png',
   './vendor/images/marker-icon.png', './vendor/images/marker-icon-2x.png', './vendor/images/marker-shadow.png',
