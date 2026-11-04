@@ -31,7 +31,7 @@ Läuft als PWA. Alle Daten bleiben offline am Handy, Sicherung als ZIP.
 ## Hinweise
 
 - **Sichern:** Unter Einstellungen → „Sicherung erstellen“ entsteht eine ZIP mit allen Einträgen und Fotos, die man z. B. per WhatsApp verschicken kann. „Sicherung einspielen“ führt die Daten zusammen.
-- **Luftbild:** Das Orthofoto der Provinz Bozen wird per WMS geladen. Layername und URL stehen oben in `app.js` (`ORTHO`). Ist es nicht erreichbar, schaltet die App automatisch auf OpenStreetMap um.
+- **Luftbild:** Das Orthofoto 2023 der Provinz Bozen (ganz Südtirol, 20 cm) wird per WMS geladen. Layername und URL stehen oben in `app.js` (`ORTHO`). Ist es nicht erreichbar, schaltet die App automatisch auf OpenStreetMap um.
 - **Offline-Karte:** Einmal angesehene Kartenausschnitte bleiben gespeichert. Am besten die Wiesen einmal mit WLAN auf der Karte durchzoomen.
 - **Spracheingabe:** Der Mikrofon-Knopf braucht meist Internet. Offline geht das Mikrofon der Android-Tastatur.
 

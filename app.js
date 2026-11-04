@@ -9,8 +9,8 @@ const MAP_START = { lat: 46.628, lng: 10.776, zoom: 13 }; // Vinschgau (Schlande
 // Luftbild der Provinz Bozen (WMS). Layername bei Bedarf hier anpassen.
 const ORTHO = {
   url: 'https://geoservices.buergernetz.bz.it/mapproxy/p_bz-Orthoimagery/wms',
-  layers: 'Aerial-2020-RGB',
-  attribution: 'Orthofoto © Autonome Provinz Bozen',
+  layers: 'Aerial-2023-RGB',
+  attribution: 'Orthofoto 2023 © Autonome Provinz Bozen (CC BY 4.0)',
 };
 
 const I = {
