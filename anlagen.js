@@ -546,7 +546,20 @@ async function viewLeitungDraw() {
   for (const a of anl) if (a.typ !== 'Leitung' && a.lat != null) L.marker([a.lat, a.lng], { icon: anlMarkerIcon(a), interactive: false, opacity: 0.85 }).addTo(map);
   const line = L.polyline([], { color: ld.color, weight: 6, lineCap: 'round', lineJoin: 'round' }).addTo(map);
   const ptLayer = L.layerGroup().addTo(map);
-  let me = null, meMk = null, follow = true, justAdded = false;
+  let me = null, meMk = null, follow = true, justAdded = false, colorOpen = false;
+  // Zielpunkt = Mitte des freien Kartenteils über dem unteren Feld
+  const aimY = () => { const sh = $('#ldSheet'); return Math.max(40, Math.round((sh ? sh.offsetTop : wrap.clientHeight) / 2)); };
+  const aimLatLng = () => map.containerPointToLatLng([map.getSize().x / 2, aimY()]);
+  const centerFor = (ll, z) => map.unproject(map.project(L.latLng(ll), z).add([0, map.getSize().y / 2 - aimY()]), z);
+  const focus = (ll, z) => map.setView(centerFor(ll, z), z, { animate: false });
+  let lastAim = null;
+  const placeCross = () => {
+    const y = aimY(); $('#ldCross').style.top = y + 'px';
+    if (lastAim != null && lastAim !== y) map.panBy([0, lastAim - y], { animate: false });
+    lastAim = y;
+  };
+  const ro = new ResizeObserver(placeCross); ro.observe($('#ldSheet')); ro.observe(wrap);
+  leaveHooks.push(() => ro.disconnect());
 
   const redraw = () => {
     line.setStyle({ color: ld.color });
@@ -560,15 +573,16 @@ async function viewLeitungDraw() {
     const n = ld.points.length, last = ld.points[n - 1];
     const k = last ? (last.photoIds || []).length : 0;
     $('#ldSheet').innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><b style="font-size:18px">${n} ${n === 1 ? 'Punkt' : 'Punkte'} · ${Math.round(lineLength(ld.points))} m</b>
-        <span class="small">${esc(ld.colorName)}</span></div>
-      <div class="swatches" role="group" aria-label="Farbe">${LINE_COLORS.map(([nm, hex]) => `<button class="sw ${ld.color === hex ? 'on' : ''}" data-c="${hex}" data-n="${esc(nm)}" style="background:${hex}" aria-label="${esc(nm)}"></button>`).join('')}</div>
+      <div class="ldhead"><b>${n} ${n === 1 ? 'Punkt' : 'Punkte'} · ${Math.round(lineLength(ld.points))} m</b>
+        <button class="ldcol" id="ldColor" aria-expanded="${colorOpen}" aria-label="Farbe: ${esc(ld.colorName)} – ändern"><span class="dot" style="background:${ld.color}"></span>${esc(ld.colorName)}<span class="chev">${colorOpen ? '▴' : '▾'}</span></button></div>
+      ${colorOpen ? `<div class="swatches" role="group" aria-label="Farbe">${LINE_COLORS.map(([nm, hex]) => `<button class="sw ${ld.color === hex ? 'on' : ''}" data-c="${hex}" data-n="${esc(nm)}" style="background:${hex}" aria-label="${esc(nm)}"></button>`).join('')}</div>` : ''}
       ${last ? `<div class="lastpt"><span class="num" style="background:${ld.color}">${n}</span><span style="flex:1">Punkt ${n}${k ? ` · ${k} ${k === 1 ? 'Foto' : 'Fotos'}` : ' – Fotos dazu?'}</span>
         <button class="btn solid blue sm" id="ldCam" aria-label="Foto zu Punkt ${n}">${I.cam}</button><button class="btn bl sm" id="ldGal" aria-label="Fotos aus Galerie zu Punkt ${n}">${I.gal}</button></div>` : ''}
       <span class="small">${ld.mode === 'tap' ? 'Karte verschieben, bis das Kreuz passt, dann „Punkt setzen“. Nahe Anlagen rasten ein.' : `Entlang der Leitung gehen – an jeder Ecke „Punkt hier“.${me ? ` GPS ±${Math.round(me.acc)} m` : ' GPS sucht …'}`}</span>
       <div class="grid12"><button class="btn bl" id="ldUndo" ${n ? '' : 'disabled'}>Zurück</button><button class="btn solid blue" id="ldAdd">${ld.mode === 'tap' ? '+ Punkt setzen' : '+ Punkt hier'}</button></div>
       <button class="btn solid" id="ldDone" ${n >= 2 ? '' : 'disabled'}>${I.check}Fertig – Details eintragen</button>`;
-    $$('.sw').forEach((b) => b.onclick = () => { ld.color = b.dataset.c; ld.colorName = b.dataset.n; saveLd(); redraw(); });
+    $('#ldColor').onclick = () => { colorOpen = !colorOpen; sheet(); };
+    $$('.sw').forEach((b) => b.onclick = () => { ld.color = b.dataset.c; ld.colorName = b.dataset.n; colorOpen = false; saveLd(); redraw(); });
     $('#ldUndo').onclick = async () => {
       const p = ld.points[ld.points.length - 1];
       if (p && (p.photoIds || []).length && !confirm(`Punkt ${ld.points.length} mit Fotos entfernen?`)) return;
@@ -583,7 +597,7 @@ async function viewLeitungDraw() {
   const addPoint = () => {
     let p;
     if (ld.mode === 'tap') {
-      const c = map.getCenter(); p = { lat: c.lat, lng: c.lng };
+      const c = aimLatLng(); p = { lat: c.lat, lng: c.lng };
       let snap = null, sd = Infinity;
       for (const a of anl) if (a.typ !== 'Leitung' && a.lat != null) { const d = distM(p, a); if (d < sd) { sd = d; snap = a; } }
       if (snap && sd <= 6) { p = { lat: snap.lat, lng: snap.lng, anlageId: snap.id, note: snap.name }; toast(`An „${snap.name}“ eingerastet`); }
@@ -599,26 +613,28 @@ async function viewLeitungDraw() {
     ld.mode = m; saveLd();
     $$('.segwrap [data-m]').forEach((b) => { b.classList.toggle('on', b.dataset.m === m); b.setAttribute('aria-pressed', b.dataset.m === m); });
     $('#ldCross').classList.toggle('hidden', m !== 'tap');
-    if (m === 'walk') { follow = true; if (me) map.setView([me.lat, me.lng], Math.max(map.getZoom(), 18)); }
+    if (m === 'walk') { follow = true; if (me) focus([me.lat, me.lng], Math.max(map.getZoom(), 18)); }
     sheet();
   };
   $$('.segwrap [data-m]').forEach((b) => b.onclick = () => setMode(b.dataset.m));
   $('#ldLayer').onclick = () => map._wbToggle();
-  $('#ldMe').onclick = () => { if (me) { follow = true; map.setView([me.lat, me.lng], 19); } else toast('GPS sucht …'); };
+  $('#ldMe').onclick = () => { if (me) { follow = true; focus([me.lat, me.lng], 19); } else toast('GPS sucht …'); };
   map.on('dragstart', () => { follow = false; });
 
   if (navigator.geolocation) {
     const w = navigator.geolocation.watchPosition((pos) => {
       me = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy };
-      if (!meMk) { meMk = L.marker([me.lat, me.lng], { icon: meIcon, interactive: false }).addTo(map); if (!ld.points.length) map.setView([me.lat, me.lng], 19); }
+      if (!meMk) { meMk = L.marker([me.lat, me.lng], { icon: meIcon, interactive: false }).addTo(map); if (!ld.points.length) focus([me.lat, me.lng], 19); }
       else meMk.setLatLng([me.lat, me.lng]);
-      if (ld.mode === 'walk' && follow) map.panTo([me.lat, me.lng]);
+      if (ld.mode === 'walk' && follow) map.panTo(centerFor([me.lat, me.lng], map.getZoom()));
       if (ld.mode === 'walk') { const s = $('#ldSheet .small'); if (s) s.textContent = `Entlang der Leitung gehen – an jeder Ecke „Punkt hier“. GPS ±${Math.round(me.acc)} m`; }
     }, () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 60000 });
     leaveHooks.push(() => navigator.geolocation.clearWatch(w));
   }
   setMode(ld.mode || 'tap');
   redraw();
+  if (ld.points.length) { const lp = ld.points[ld.points.length - 1]; focus([lp.lat, lp.lng], 19); }
+  placeCross();
   window.addEventListener('resize', place);
   leaveHooks.push(() => window.removeEventListener('resize', place));
 }

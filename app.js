@@ -1,7 +1,7 @@
 /* Wiesenbuch – Notizen für die Wiese
    Version 1: läuft komplett offline am Handy (IndexedDB). */
 
-const APP_VERSION = '0.2.3';
+const APP_VERSION = '0.2.4';
 const ANDERES = '_anderes';
 const CATS = ['Säule', 'Draht', 'Hagelnetz', 'Bewässerung', 'Baum', 'Sonstiges'];
 const MAP_START = { lat: 46.628, lng: 10.776, zoom: 13 }; // Vinschgau (Schlanders)

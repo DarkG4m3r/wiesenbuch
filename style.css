@@ -457,3 +457,11 @@ html.no-anim *, html.no-anim *::before, html.no-anim *::after { animation: none 
 /* sehr lange Namen in Listen kürzen */
 .card h2, .arow b, .wrow b, .grphead .gname { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .opt, .tbtn span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* 0.2.4 – Leitung einzeichnen: Kreuz über dem Feld, kompakte Farbwahl */
+#ldCross { transform: translate(-50%, -50%); }
+.ldhead { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.ldhead b { font-size:18px; }
+.ldcol { display:inline-flex; align-items:center; gap:8px; min-height:40px; padding:0 12px; border-radius:20px; border:1.5px solid #d5dbe5; background:#fff; font:inherit; font-size:15px; color:inherit; }
+.ldcol .dot { width:20px; height:20px; border-radius:50%; box-shadow: inset 0 0 0 2px rgba(255,255,255,.6); }
+.ldcol .chev { font-size:12px; opacity:.6; }
